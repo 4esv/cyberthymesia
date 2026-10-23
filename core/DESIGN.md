@@ -52,9 +52,10 @@ the node just built (l, i) has i odd, build (l+1, i>>1) from (l, i-1) and (l, i)
 - both children have non-null meta (all tools) → source det, meta = combine, text = aggText.
 - else source clip, text = mergeClip(a.text, b.text), meta null.
 - mh = hex(nodeHash(a.mh, b.mh)).
-Pins: isDirective(row) → pin kind 'directive', reason 'directive'. toolKey(row): if !ok → pin
-kind 'failure', key = norm, reason 'failure'; if ok → mark resolved every open failure pin
-with the same key. Heuristics never resolve directive/manual pins.
+Pins: isDirective(row) → pin kind 'directive', reason 'directive'. toolKey(row): key =
+harness/session/agent/lowercased tool name. If !ok and live (not backfill) and agent is null →
+pin kind 'failure', reason 'failure'; if ok → mark resolved every open failure pin with the
+same key (backfill and subagent items still resolve, never create). Heuristics never resolve directive/manual pins.
 - toolOk(output, isError): a tool is ERR only when isError is true or exitCode(output) is a
   nonzero number (a leading "Exit code N", or a trailing "Command exited with code N" line).
   The output text alone never marks a tool ERR — a successful `grep` whose output prints

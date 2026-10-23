@@ -1,0 +1,10 @@
+[
+  {"id":"F01","file":"core/src/index.ts","find":"failPins && agent === null","replace":"failPins","guard":"failure pin: never from a subagent item"},
+  {"id":"F02","file":"core/src/index.ts","find":"failPins && agent === null","replace":"agent === null","guard":"failure pin: never during backfill"},
+  {"id":"F03","file":"core/src/index.ts","find":"ingestItems(items, true, false)","replace":"ingestItems(items, true, true)","guard":"backfill passes failPins=false"},
+  {"id":"F04","file":"core/src/pins.ts","find":"${item.session}\\0","replace":"","guard":"failure key is per session (another session's success does not resolve)"},
+  {"id":"F05","file":"core/src/pins.ts","find":"${item.meta.name.toLowerCase()}`","replace":"${item.meta.name.toLowerCase()}:${item.text}`","guard":"failure resolves on any later success of the same tool, not the same output"},
+  {"id":"F06","file":"core/src/pins.ts","find":"${item.meta.name.toLowerCase()}`","replace":"x`","guard":"failure key includes the tool name (a Read success does not resolve a Bash failure)"},
+  {"id":"F07","file":"core/src/leaves.ts","find":"if (isError) return false","replace":"if (isError || output.includes('Handback')) return false","guard":"tool ERR only from isError or a nonzero exit code of that call"},
+  {"id":"F08","file":"core/src/leaves.ts","find":"if (code !== undefined && code !== 0) return false","replace":"if (code !== undefined) return false","guard":"exit code 0 is ok"}
+]

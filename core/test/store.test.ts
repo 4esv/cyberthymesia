@@ -94,11 +94,60 @@ test('pins: directive, failure, auto-resolve by key, no false pins', () => {
   assert.equal(s.status().pins, 1)
   s.ingest([tool('Bash', { command: 'npm test' }, 'Exit code 1\nboom', true)])
   assert.equal(s.status().pins, 2)
-  s.ingest([tool('Bash', { command: 'make build' }, 'fine', false)])
-  assert.equal(s.status().pins, 2) // different key: not resolved, and success makes no pin
-  s.ingest([tool('Bash', { command: 'npm test' }, 'all good', false)])
-  assert.equal(s.status().pins, 1)
+  s.ingest([tool('Read', { file_path: '/x' }, 'fine', false)])
+  assert.equal(s.status().pins, 2) // another tool succeeding does not resolve it, and success makes no pin
+  s.ingest([tool('Bash', { command: 'make build' }, 'all good', false)])
+  assert.equal(s.status().pins, 1) // a later success of the same tool resolves it
   assert.doesNotMatch(s.pins(), /failure/)
+})
+
+test('failure pin: a live main-session Bash failure with no later success stays pinned', () => {
+  const { s } = mk()
+  s.ingest([tool('Bash', { command: 'make' }, 'Exit code 2\nboom', true), tool('Read', { file_path: '/x' }, 'fine', false)])
+  assert.equal(s.status().pins, 1)
+  assert.match(s.pins(), /failure/)
+  // another session's success does not resolve it
+  s.ingest([tool('Bash', { command: 'ls' }, 'fine', false, 'other')])
+  assert.equal(s.status().pins, 1)
+})
+
+test('failure pin: never from a subagent item (handback, Monitor, polling, bash typo)', () => {
+  const { s } = mk()
+  const sub = (t: NormItem): NormItem => ({ ...t, agent: 'ag1' })
+  s.ingest([
+    sub(tool('SubagentHandback', { message: '103/103 mutants killed' }, 'Only the auto-mode classifier can allow SubagentHandback', true)),
+    sub(tool('Monitor', { query: 'select:Monitor' }, '<tool_use_error>InputValidationError</tool_use_error>', true)),
+    sub(tool('Bash', { command: 'sleep 60; ls' }, '<tool_use_error>Blocked: sleep 60</tool_use_error>', true)),
+    sub(tool('bash', { command: 'echo' }, '<tool_use_error>Error: No such tool', true)),
+    sub(tool('Bash', { command: 'x' }, 'Exit code 1\nboom', false)),
+  ])
+  assert.equal(s.status().pins, 0)
+  assert.equal(s.pins(), 'no open pins')
+})
+
+test('tool status: a successful handback/Monitor/ToolSearch and "Exit code 0" are ok, never pinned', () => {
+  const { s } = mk()
+  s.ingest([
+    tool('SubagentHandback', { message: '103/103 mutants killed' }, 'Report delivered to your caller.', false, 'sess1', 'h0'),
+    tool('Monitor', { query: 'select:Monitor' }, 'Handback ok', false, 'sess1', 'h1'),
+    tool('ToolSearch', { query: 'select:Monitor' }, 'Exit code 0\nfound', false, 'sess1', 'h2'),
+  ])
+  assert.equal(s.status().pins, 0)
+  assert.match(s.view('claude', 'sess1', { tailStart: 1 }).block, /SubagentHandback .*→ ok/)
+})
+
+test('failure pin: never during backfill, but backfill success still resolves', () => {
+  const { s, cwd, home } = mk()
+  const cdir = join(home, 'claude', 'p1')
+  mkdirSync(cdir, { recursive: true })
+  writeFileSync(join(cdir, 'a.jsonl'),
+    cUser('u1', 'cs1', cwd, 'go', '2026-02-01T00:00:00Z') +
+    cAsst('a1', 'cs1', cwd, [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'false' } }], '2026-02-01T00:00:01Z') +
+    cUser('r1', 'cs1', cwd, [{ type: 'tool_result', tool_use_id: 't1', content: 'Exit code 1', is_error: true }], '2026-02-01T00:00:02Z'))
+  s.backfill({ claudeDir: join(home, 'claude'), piDir: join(home, 'pi') })
+  assert.equal(s.status().items, 2)
+  assert.equal(s.status().pins, 0)
+  assert.equal(s.pins(), 'no open pins')
 })
 
 test('isDirective: only explicit standing-order language in a real human message pins', () => {

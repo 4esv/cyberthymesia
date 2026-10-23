@@ -31,11 +31,12 @@ export function isDirective(item: ItemRow, oneShot = false): boolean {
     .some((s) => s !== '' && !s.endsWith('?') && DIRECTIVE.test(s))
 }
 
-// The normalized key and status of a tool item, for failure pins.
+// The failure key and status of a tool item (SPEC §5): a failure is open per
+// (harness, session, agent, tool name) until a later call of that tool succeeds.
 export function toolKey(item: ItemRow): { key: string; ok: boolean } | null {
   if (item.kind !== 'tool' || item.meta === null) return null
   const ok = toolOk(item.text, item.meta.isError)
-  return { key: keyArg(item.meta.name, item.meta.input, item.text, ok).norm, ok }
+  return { key: `${item.harness}\0${item.session}\0${item.agent ?? ''}\0${item.meta.name.toLowerCase()}`, ok }
 }
 
 export function pinText(item: ItemRow): string {

@@ -251,3 +251,17 @@ Test command: `node --test core/test/sessions.test.ts` (mutants in core/test/mut
 
 Guard mutation (home-guard.test.ts): a test file that called openStore without a home made the guard fail ("tests leaked stores into the default home"); removing it made it pass. The guard first passed vacuously because a nested `node --test` inherits NODE_TEST_CONTEXT and runs nothing; the guard now deletes that variable.
 Pi: replacing getStore(ctx.cwd, sidOf(ctx)) with getStore(ctx.cwd) made pi/test/extension.test.ts fail (1 test), restored.
+
+## Failure pins: live main session only, resolve per tool (core/src/index.ts, pins.ts, leaves.ts): 8/8 killed
+Test command: `node --test core/test/properties.test.ts core/test/store.test.ts` (mutants in core/test/mutants.failpins.json). F07 and F08 first survived; the "tool status" test now covers them.
+
+| id | file | guard | result |
+|---|---|---|---|
+| F01 | core/src/index.ts | failure pin: never from a subagent item | killed |
+| F02 | core/src/index.ts | failure pin: never during backfill | killed |
+| F03 | core/src/index.ts | backfill passes failPins=false | killed |
+| F04 | core/src/pins.ts | failure key is per session (another session's success does not resolve) | killed |
+| F05 | core/src/pins.ts | failure resolves on any later success of the same tool, not the same output | killed |
+| F06 | core/src/pins.ts | failure key includes the tool name (a Read success does not resolve a Bash failure) | killed |
+| F07 | core/src/leaves.ts | tool ERR only from isError or a nonzero exit code of that call | killed |
+| F08 | core/src/leaves.ts | exit code 0 is ok | killed |

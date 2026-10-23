@@ -183,7 +183,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   const leafPrefix = (seq: number): string => prefix(getItem(seq).kind, leafTag(seq))
 
   // Ingest a batch of NormItems. Caller must already hold a transaction.
-  const ingestItems = (items: NormItem[], autoPin = true): { added: number; lastSeq: number } => {
+  const ingestItems = (items: NormItem[], autoPin = true, failPins = true): { added: number; lastSeq: number } => {
     let count = countItems()
     let added = 0
     const exists = db.prepare('SELECT seq FROM items WHERE harness = ? AND session = ? AND uuid = ?')
@@ -246,7 +246,9 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       if (autoPin && isDirective(row, item.oneShot === true)) insPin.run(seq, 'directive', 'directive', null)
       const tk = autoPin ? toolKey(row) : null
       if (tk !== null) {
-        if (!tk.ok) insPin.run(seq, 'failure', 'failure', tk.key)
+        // Only a live main-session failure can be unresolved: backfill and subagent
+        // transcripts are finished work (SPEC §5).
+        if (!tk.ok) { if (failPins && agent === null) insPin.run(seq, 'failure', 'failure', tk.key) }
         else resolveFail.run('failure', tk.key)
       }
       added++
@@ -415,7 +417,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       }
       items.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
       return tx(() => {
-        const { added } = ingestItems(items)
+        const { added } = ingestItems(items, true, false)
         for (const r of raw) db.prepare('INSERT OR IGNORE INTO raw (harness, session, uuid, thinking) VALUES (?,?,?,?)').run(r.harness, r.session, r.uuid, r.thinking)
         for (const c of open) upsertCall(c)
         for (const c of closed) deleteCall(c)

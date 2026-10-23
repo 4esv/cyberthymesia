@@ -499,7 +499,7 @@ test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a
   })
   assert.ok(over > 0 && under > 0, `both over-quota (${over}) and under-quota (${under}) cases ran`)
 
-  // failure auto-resolve against a model of open failures per command
+  // failure auto-resolve against a model of open failures per tool
   each(seeds(25), (seed, r) => {
     const open = new Map<string, number>()
     const items: NormItem[] = Array.from({ length: 40 }, (_, k) => {
@@ -507,7 +507,7 @@ test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a
       const fail = r.chance(0.5)
       const output = fail ? (r.chance(0.5) ? 'error: boom ' + k : 'boom') : 'all good ' + k
       const isError = fail
-      open.set(command, fail ? (open.get(command) ?? 0) + 1 : 0)
+      open.set('Bash', fail ? (open.get('Bash') ?? 0) + 1 : 0)
       return { harness: 'claude', session: 'p7bb', uuid: 'b' + k, kind: 'tool', ts: new Date(Date.UTC(2026, 0, 1) + k * 1000).toISOString(), text: output, tool: { name: 'Bash', input: { command }, output, isError } }
     })
     withStore((s) => {
@@ -516,7 +516,7 @@ test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a
       for (const c of chunked(r, items, 8)) {
         s.ingest(c)
         for (const it of c) {
-          const cmd = (it.tool!.input as any).command as string
+          const cmd = 'Bash'
           const failed = it.tool!.isError
           model.set(cmd, failed ? (model.get(cmd) ?? 0) + 1 : 0)
         }

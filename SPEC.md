@@ -134,9 +134,13 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
     extension's `ctx.hasUI` is not true = `pi -p`, passed as `syncPi(file,
     {oneShot: true})` / `cyth sync-pi --one-shot`). A false pin is misdirection,
     since `<pinned>` reads as standing orders.
-  - `failure`: a `tool` item with status `ERR`. Auto-resolves when a later
-    tool item with the same normalized key arg (same Bash command, same file
-    for Edit/Write) has status `ok`.
+  - `failure`: a `tool` item with status `ERR` (only `isError` or a nonzero
+    exit code of that very call) that is UNRESOLVED and that a future session
+    needs. Only from live ingest of a main session: never from a subagent item
+    (`agent` set; a finished transcript, whose handback reports outcomes) and
+    never during `backfill`. A failure is open per (session, agent, tool name)
+    and auto-resolves when a later call of the same tool in that session has
+    status `ok`.
 - Manual: `pin(ref, reason)` / `unpin(pinId)` via tools.
 - Quota `PIN_BYTES = 8192`. Over quota → oldest pins render as refs only, and
   the block starts with `ALGEDONIC: <n> pins over quota; review with memory_pins`.
