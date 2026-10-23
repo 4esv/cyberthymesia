@@ -44,10 +44,13 @@ Node `source` ∈ `verbatim` | `det` | `model` | `clip`:
   Key arg per tool: Bash `command`; Read/Edit/Write/NotebookEdit `file_path`
   (+ range / `+a -r` lines); Grep/Glob `pattern` (+ match count); Agent/Task
   `description`; WebFetch `url`; WebSearch `query`; default: name + clipped JSON
-  input. Status: `ok` | `ERR` (isError, nonzero `exit code`, or a
-  `/error|fail|exception|traceback/i` first line).
-- **Leaf prefix:** `u:` `a:` `t:`, then `@<h><sess4>` (`c`/`p` + first 4 of the
-  session id) only when the session differs from the previous leaf's.
+  input. Status: `ok` | `ERR` (the harness's `isError`, or a nonzero
+  `exit code` in the output). Output text alone never makes a call ERR: a
+  successful `grep failed` prints "failed".
+- **Leaf prefix:** `u:` `a:` `t:`, then `@<h><sess4>` (`c`/`p` + the last 4
+  alphanumerics of the session id; Pi ids are UUIDv7, whose first characters
+  are a timestamp shared by every session of the day) only when the session
+  differs from the previous leaf's.
 - **Merge `(l≥1)`:** if every item under it is a `tool` item, a `det` aggregate
   composed from the children's `meta` (`{tools:{Bash:3,…}, files:[top5], fails, oks}`),
   rendered ≤ NODE. Else `clip` = first ⌊(NODE−5)/2⌋ bytes of each child joined
@@ -82,7 +85,8 @@ stay stable between batches (prompt cache).
 - **Convergence:** all-merged is the popcount(viewEnd) roots, ≤ 31 × NODE
   = 15.9 KB < HIGH/2 for any HIGH ≥ 32 KB, so `fit` always terminates under budget.
 - **Rendering** (one text block, the order IS the cache layout):
-  1. the contract (§7), stable;
+  1. the contract (§7), stable. It travels only inside this block, so a model
+     is told about `<memory>` exactly when `<memory>` is in its context;
   2. `<memory>` then one line per part, `#ref|text`, then `</memory>`; stable until the next batch;
   3. `<pinned>` block (§5), changes only when pins change;
   4. nothing else; the harness appends the raw tail after this block.
@@ -101,8 +105,9 @@ stay stable between batches (prompt cache).
 - `zoom('#n')` → item n whole: kind, session, ts, text (tool: input + output),
   paged at `PAGE = 20000` bytes; `zoom('#n@offset')` continues; every page ends
   with a footer saying whether more remains and how to get it (OptMem).
-- `search(q, {regex?, limit=20})` → `#n|leaf text` + a snippet per hit, newest first.
-  Default FTS5 (bm25) over item text; `regex` scans, capped by PAGE.
+- `search(q, {regex?, limit=20})` → `#n|leaf text` + a snippet per hit.
+  Default FTS5: bm25 picks the best `limit` hits, which are then listed newest
+  first (by `seq`, descending); `regex` scans newest first, capped by PAGE.
 - `roots()` → the tree's roots, for orientation.
 
 ## 5. Algedonic channel (pins)
@@ -111,8 +116,10 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
 `<pinned>` until it is resolved, whatever its age.
 
 - Auto-pin at ingest (heuristics, can only ADD):
-  - `directive`: a `user` item ≤ 1000 chars matching
-    `/\b(never|always|don't|do not|must|stop|remember|from now on)\b/i`.
+  - `directive`: a `user` item ≤ 1000 chars with a sentence (split after
+    `.` `!` `?` or a line break) that matches
+    `/\b(never|always|don't|do not|must|stop|remember|from now on)\b/i` and
+    does not end in `?`. "Why don't we …?" is a question, not an order.
   - `failure`: a `tool` item with status `ERR`. Auto-resolves when a later
     tool item with the same normalized key arg (same Bash command, same file
     for Edit/Write) has status `ok`.
@@ -133,21 +140,35 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
   check); check every node text ≤ NODE and every persisted view covers
   `[0,viewEnd)` exactly. Non-zero exit on any failure.
 
-## 7. Contract (the prompt section, both harnesses)
+## 7. Contract (the head of the view block, both harnesses)
+
+Every sentence in it must be true of what the model has in front of it, in
+both harnesses. It is rendered by core at the head of the view block (§3), not
+put in the system prompt: if the view cannot be built, the model gets neither
+the tree nor a description of one.
 
 ```
 ## Memory: cyberthymesia
-This conversation never ends; nothing is ever lost. <memory> lists the project's
-whole history as a binary tree of one-line summaries, oldest first: `#a-b|...`
-covers items a..b, `#n|...` is one item. Detail fades with age. The raw messages
-after it are the recent present, verbatim.
-- The latest word on a thing is the truth. Before you act, guess or ask about
-  anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): open #a-b into its halves; #n gives the item whole (paged).
-- memory_find(query): full-text search over every item, verbatim.
-- memory_pin(ref, reason) / memory_unpin(id): keep something at full resolution.
-- <pinned> items are alarms and standing orders: obey them until resolved.
-- Summaries keep little of tool output: say in your reply what you learned that matters later.
+This project keeps one log of every session, Claude Code and Pi alike: each user
+message, assistant reply and tool call, verbatim. <memory> shows that log as a
+binary tree, oldest first, one line per node: `#a-b|...` covers items a..b,
+`#n|...` is item n. Lines start u: (user), a: (assistant) or t: (tool);
+@c1234 / @p1234 marks a switch to another Claude Code or Pi session. Older
+history is merged into fewer, coarser lines. A line with … in it is clipped
+text still waiting for its one-line summary. The messages after this block are
+the recent part of this session, verbatim. The block was built when this
+conversation started or last compacted; memory_find and memory_pins read the
+log as it is now.
+- The latest word on a thing is the truth. Before you act on, guess at or ask
+  about anything past, find it in <memory> and zoom until you have it whole.
+- memory_zoom(ref): #a-b gives its two halves; #n gives item n whole (paged: #n@offset).
+- memory_find(query): full-text search over every item, newest first.
+- memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
+- <pinned> holds user directives and unresolved tool failures, flagged
+  automatically or pinned by hand, verbatim (first 1 KB) whatever their age.
+  Follow them; if one is resolved or was flagged by mistake, say so and unpin it.
+- Tool output survives here only as one-line digests: say in your reply what
+  you learned that matters later.
 ```
 
 ## 8. Core API (`core/src/index.ts`, Node ≥ 22, `node:sqlite`, zero deps)
@@ -195,18 +216,34 @@ message on stderr.
 
 Both: **fail open.** Any error in cyberthymesia → the harness's native
 behaviour, plus a status line saying so. `CYTH_DISABLE=1` → pass-through.
-Summaries: after each turn, take `pending(4)` and run them on the cheapest model
-available, in the background, never blocking a turn. Tools: `memory_zoom`,
-`memory_find`, `memory_pin`, `memory_unpin`, `memory_pins` (thin calls into
-core). Contract (§7) goes into the system prompt.
+Summaries: at session start and after each turn, drain `pending(4)` batches on
+the cheapest model available, in the background, never blocking a turn: up to
+8 batches, stopping early when nothing is pending or a batch lands nothing
+(one batch per turn falls behind, since a turn adds several clip nodes). Tools:
+`memory_zoom`, `memory_find`, `memory_pin`, `memory_unpin`, `memory_pins`
+(thin calls into core). The view block, contract included, reaches the model
+from the first model call of every session; a new session in a project with
+history sees that history at once.
 
 - **claude-code/** (a Claude Code mod; no Node in the module, so core is reached
   through `$.process.run` of the CLI). Ingest: `sync-claude` on the session's
-  transcript at `turn.complete`. Compaction: answer `session.compact` with
-  `{ messages: [ one user message = view block, …tail messages kept by handle ] }`;
-  trigger it with `$.session.compact()` when the context passes `CYTH_COMPACT_AT`
-  (default 100k tokens). Subagent compactions (`agentId`) get the same treatment
-  under `session = <session>/<agentId>`.
+  transcript at `turn.complete`. View: a `prompt.context` hook adds the view
+  block for `(claude, <session>)` as a context block of the conversation's
+  first user message (beside CLAUDE.md), so it is there from the first
+  request; the engine keeps that block until a compaction, then asks again.
+  Compaction: answer `session.compact` with the tail messages kept by handle,
+  after folding `tailStart` to the tail's first item and invalidating
+  `prompt.context`, so the re-sent block is the folded view. The adapter
+  never calls `$.session.compact()` itself: a compaction a module raises skips
+  that module's own `session.compact` hook, so the engine's summarizer would
+  run instead. Compaction comes from the engine's triggers (`/compact`, and
+  auto-compaction, whose threshold `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (≥ 100k) lower to keep the context small).
+  Subagent compactions (`agentId`) fold under `session = <session>/<agentId>`.
+- **Claude transcripts after a compaction** repeat the kept tail as new
+  records (new uuids, same timestamps and text). Ingest drops a user or
+  assistant record whose session, kind, timestamp and text equal an existing
+  item's, and skips the engine's own compaction summary (`isCompactSummary`).
 - **pi/** (a Pi extension; imports core directly). Ingest at `message_end`
   (or `syncPi` on the session file). `context` hook: replace everything before
   the tail with one user message carrying the view block; fold when the tail

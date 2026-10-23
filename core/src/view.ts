@@ -10,17 +10,26 @@ export type ViewState = { parts: Part[]; viewEnd: number; tailStart: number }
 export type TextOf = (l: number, i: number) => string
 
 export const CONTRACT = `## Memory: cyberthymesia
-This conversation never ends; nothing is ever lost. <memory> lists the project's
-whole history as a binary tree of one-line summaries, oldest first: \`#a-b|...\`
-covers items a..b, \`#n|...\` is one item. Detail fades with age. The raw messages
-after it are the recent present, verbatim.
-- The latest word on a thing is the truth. Before you act, guess or ask about
-  anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): open #a-b into its halves; #n gives the item whole (paged).
-- memory_find(query): full-text search over every item, verbatim.
-- memory_pin(ref, reason) / memory_unpin(id): keep something at full resolution.
-- <pinned> items are alarms and standing orders: obey them until resolved.
-- Summaries keep little of tool output: say in your reply what you learned that matters later.`
+This project keeps one log of every session, Claude Code and Pi alike: each user
+message, assistant reply and tool call, verbatim. <memory> shows that log as a
+binary tree, oldest first, one line per node: \`#a-b|...\` covers items a..b,
+\`#n|...\` is item n. Lines start u: (user), a: (assistant) or t: (tool);
+@c1234 / @p1234 marks a switch to another Claude Code or Pi session. Older
+history is merged into fewer, coarser lines. A line with … in it is clipped
+text still waiting for its one-line summary. The messages after this block are
+the recent part of this session, verbatim. The block was built when this
+conversation started or last compacted; memory_find and memory_pins read the
+log as it is now.
+- The latest word on a thing is the truth. Before you act on, guess at or ask
+  about anything past, find it in <memory> and zoom until you have it whole.
+- memory_zoom(ref): #a-b gives its two halves; #n gives item n whole (paged: #n@offset).
+- memory_find(query): full-text search over every item, newest first.
+- memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
+- <pinned> holds user directives and unresolved tool failures, flagged
+  automatically or pinned by hand, verbatim (first 1 KB) whatever their age.
+  Follow them; if one is resolved or was flagged by mistake, say so and unpin it.
+- Tool output survives here only as one-line digests: say in your reply what
+  you learned that matters later.`
 
 export function partLine(p: Part): string {
   return refOf(p.l, p.i) + '|' + p.text
