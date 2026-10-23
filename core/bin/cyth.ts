@@ -6,17 +6,17 @@ import { openStore } from '../src/index.ts'
 import type { Store } from '../src/types.ts'
 
 const USAGE = `usage: cyth [--cwd DIR] [--home DIR] [--json] <command> ...
-  status | sync-claude <file> | sync-pi <file> | backfill [--claude DIR] [--pi DIR]
+  status | sync-claude <file> | sync-pi <file> [--one-shot] | backfill [--claude DIR] [--pi DIR]
   | view <harness> <session> | fold <harness> <session> <seq> | zoom <ref>
   | search <q> [--regex] [--limit N] | roots | pin <ref> <reason> | unpin <id>
-  | pins | pending [--limit N] | put <ref> <text> | forget <ref> | verify`
+  | pins | pending [--limit N] | put <ref> <text> | forget <ref> | forget-session <id|tag> [--dry-run] | verify`
 
 class Usage extends Error {}
 
 type Out = { json: unknown; human: string; code?: number }
 
 const VALUE_FLAGS = new Set(['--cwd', '--home', '--limit', '--claude', '--pi'])
-const BOOL_FLAGS = new Set(['--json', '--regex'])
+const BOOL_FLAGS = new Set(['--json', '--regex', '--dry-run', '--one-shot'])
 const flags = new Map<string, string | true>()
 const pos: string[] = []
 let store: Store | undefined
@@ -63,7 +63,7 @@ function run(): Out {
     case 'sync-claude':
     case 'sync-pi': {
       arity(1, `${cmd} <file>`)
-      const r = cmd === 'sync-claude' ? open().syncClaude(rest[0]) : open().syncPi(rest[0])
+      const r = cmd === 'sync-claude' ? open().syncClaude(rest[0]) : open().syncPi(rest[0], { oneShot: flags.get('--one-shot') === true })
       return { json: { added: r.added }, human: `added: ${r.added}` }
     }
     case 'backfill': {
@@ -131,6 +131,21 @@ function run(): Out {
       arity(1, 'forget <ref>')
       open().forget(rest[0])
       return done()
+    }
+    case 'forget-session': {
+      arity(1, 'forget-session <id|tag> [--dry-run]')
+      const p = open().forgetSession(rest[0], { dryRun: flags.get('--dry-run') === true })
+      const lines = [
+        `${p.dryRun ? 'would remove' : 'removed'} session ${p.sessions.map((x) => `${x.harness}:${x.session}`).join(', ')}`,
+        `items (${p.items.length}): ${p.items.join(' ')}`,
+        `fts rows: ${p.ftsRows}; raw rows: ${p.rawRows}; pending-call rows: ${p.callRows}`,
+        `pins (${p.pins.length}): ${p.pins.join(' ')}`,
+        `session views: ${p.views.map((v) => `${v.harness}:${v.session}`).join(' ') || 'none'}`,
+        `cursors: ${p.cursors.join(' ') || 'none'}`,
+        `items remaining: ${p.remaining}`,
+        `also: ${p.resets}`,
+      ]
+      return { json: p, human: lines.join('\n') }
     }
     case 'verify': {
       arity(0, 'verify')

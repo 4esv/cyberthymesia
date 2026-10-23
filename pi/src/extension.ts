@@ -24,7 +24,7 @@ export type View = { block: string; viewEnd: number; tailStart: number; bytes: n
 export type Store = {
 	root: string;
 	dbPath: string;
-	syncPi(sessionPath: string): { added: number };
+	syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number };
 	seqOf(harness: string, session: string, uuid: string): number | undefined;
 	view(harness: string, session: string, opts?: { high?: number; tail?: number; tailStart?: number }): View;
 	fold(harness: string, session: string, tailStart: number): void;
@@ -143,7 +143,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 
 	const sync = (s: Store, ctx: Ctx) => {
 		const file = ctx.sessionManager.getSessionFile();
-		if (file && existsSync(file)) s.syncPi(file); // Pi writes the file once the first user message exists
+		if (file && existsSync(file)) s.syncPi(file, { oneShot: ctx.hasUI !== true }); // pi -p has no UI: a one-shot run, never auto-pinned as a standing order; Pi writes the file once the first user message exists
 	};
 
 	// The store seq of a message: the smallest seq of any item it produced; undefined if none yet.

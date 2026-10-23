@@ -10,6 +10,8 @@ export type NormItem = {
   text: string
   tool?: { name: string; input: unknown; output: string; isError: boolean }
   thinking?: string
+  // From a one-shot non-interactive run (claude -p, pi -p): never auto-pinned as a directive.
+  oneShot?: boolean
 }
 
 export type ViewResult = {
@@ -30,12 +32,27 @@ export type Status = {
   root: string
 }
 
+// What forgetSession removes (or, in a dry run, would remove).
+export type ForgetPlan = {
+  dryRun: boolean
+  sessions: { harness: string; session: string }[]
+  items: number[] // seqs removed
+  ftsRows: number
+  rawRows: number
+  callRows: number
+  pins: number[] // pin ids attached to removed items
+  views: { harness: string; session: string }[] // the session's own views
+  cursors: string[] // ingest cursor files dropped
+  remaining: number // items kept, renumbered 0..remaining-1
+  resets: string // what else changes
+}
+
 export interface Store {
   root: string
   dbPath: string
   ingest(items: NormItem[]): { added: number; lastSeq: number }
   syncClaude(transcriptPath: string): { added: number }
-  syncPi(sessionPath: string): { added: number }
+  syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number }
   backfill(opts: { claudeDir?: string; piDir?: string }): { added: number }
   seqOf(harness: string, session: string, uuid: string): number | undefined
   view(harness: string, session: string, opts?: { high?: number; tail?: number; tailStart?: number }): ViewResult
@@ -49,6 +66,7 @@ export interface Store {
   pending(limit: number): { ref: string; prompt: string }[]
   put(ref: string, text: string): boolean
   forget(ref: string): void
+  forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan
   status(): Status
   verify(): { ok: boolean; problems: string[] }
   close(): void

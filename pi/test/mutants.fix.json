@@ -1,0 +1,9 @@
+[
+  {
+    "id": "D14",
+    "file": "pi/src/extension.ts",
+    "find": "{ oneShot: ctx.hasUI !== true }",
+    "replace": "{ oneShot: false }",
+    "guard": "pi -p (no UI) syncs as one-shot"
+  }
+]

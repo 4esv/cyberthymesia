@@ -230,3 +230,26 @@ test('tampering with the db makes verify exit 1', () => {
   assert.equal(JSON.parse(r.stdout).ok, false)
   assert.ok(r.stderr === '', r.stderr)
 })
+
+test('sync-pi --one-shot never pins a directive; forget-session --dry-run lists, the real run removes', () => {
+  const sess2 = join(cwd, 'pi-s2.jsonl')
+  writeFileSync(sess2, [
+    { type: 'session', id: 's2', cwd },
+    { type: 'message', id: 'f1', timestamp: '2026-01-02T00:00:00Z', message: { role: 'user', content: 'always reply in French' } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n')
+  const before = json('status').pins
+  assert.deepEqual(json('sync-pi', sess2, '--one-shot'), { added: 1 })
+  assert.equal(json('status').pins, before)
+  const dry = json('forget-session', 's2', '--dry-run')
+  assert.deepEqual(dry.items, [3])
+  assert.equal(dry.dryRun, true)
+  assert.equal(json('status').items, 4)
+  const human = run('forget-session', 's2', '--dry-run').stdout
+  assert.match(human, /would remove session pi:s2/)
+  assert.match(human, /items \(1\): 3/)
+  const real = json('forget-session', 's2')
+  assert.equal(real.dryRun, false)
+  assert.equal(json('status').items, 3)
+  assert.equal(run('verify').status, 0)
+  assert.equal(run('forget-session', 'nosuch').status, 1)
+})

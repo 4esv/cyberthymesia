@@ -1,0 +1,247 @@
+[
+  {
+    "id": "D01",
+    "file": "core/src/pins.ts",
+    "find": "item.kind !== 'user' || oneShot ||",
+    "replace": "item.kind !== 'user' ||",
+    "guard": "directive: never from a one-shot run"
+  },
+  {
+    "id": "D02",
+    "file": "core/src/pins.ts",
+    "find": "|| item.agent !== null ||",
+    "replace": "||",
+    "guard": "directive: never from a subagent prompt"
+  },
+  {
+    "id": "D03",
+    "file": "core/src/pins.ts",
+    "find": "(always|never|from now on|",
+    "replace": "(always|never|must|stop|from now on|",
+    "guard": "directive: only explicit standing-order words"
+  },
+  {
+    "id": "D04",
+    "file": "core/src/pins.ts",
+    "find": "|don['\\u2019]t ever|",
+    "replace": "|",
+    "guard": "directive: \"don't ever\" is a standing order"
+  },
+  {
+    "id": "D05",
+    "file": "core/src/pins.ts",
+    "find": "    .replace(/\"[^\"\\n]*\"/g, ' ')\n",
+    "replace": "",
+    "guard": "directive: double-quoted spans ignored"
+  },
+  {
+    "id": "D06",
+    "file": "core/src/pins.ts",
+    "find": "    .replace(/`[^`\\n]*`/g, ' ')\n",
+    "replace": "",
+    "guard": "directive: inline code ignored"
+  },
+  {
+    "id": "D07",
+    "file": "core/src/pins.ts",
+    "find": "    .replace(/```[\\s\\S]*?(```|$)/g, ' ')\n",
+    "replace": "",
+    "guard": "directive: fenced code ignored"
+  },
+  {
+    "id": "D08",
+    "file": "core/src/pins.ts",
+    "find": "!s.endsWith('?') && DIRECTIVE",
+    "replace": "DIRECTIVE",
+    "guard": "directive: a question is not an order"
+  },
+  {
+    "id": "D09",
+    "file": "core/src/pins.ts",
+    "find": "|every time)",
+    "replace": "|every time_)",
+    "guard": "directive: \"every time\" is a standing order"
+  },
+  {
+    "id": "D10",
+    "file": "core/src/index.ts",
+    "find": "isDirective(row, item.oneShot === true)",
+    "replace": "isDirective(row, false)",
+    "guard": "ingest passes oneShot to the directive check"
+  },
+  {
+    "id": "D11",
+    "file": "core/src/ingest.ts",
+    "find": "d.entrypoint === 'sdk-cli'",
+    "replace": "false",
+    "guard": "claude -p transcripts (sdk-cli) are one-shot"
+  },
+  {
+    "id": "D12",
+    "file": "core/src/ingest.ts",
+    "find": "...(oneShot ? { oneShot: true } : {})",
+    "replace": "",
+    "guard": "syncPi oneShot reaches the items"
+  },
+  {
+    "id": "D13",
+    "file": "core/src/index.ts",
+    "find": "parsePi(file, off, lookup, o?.oneShot === true)",
+    "replace": "parsePi(file, off, lookup, false)",
+    "guard": "syncPi forwards opts.oneShot"
+  },
+  {
+    "id": "S01",
+    "file": "core/src/index.ts",
+    "find": "|| META_OUTPUT.test(t)) {",
+    "replace": ") {",
+    "guard": "put rejects meta-commentary"
+  },
+  {
+    "id": "S02",
+    "file": "core/src/leaves.ts",
+    "find": "these two lines?|",
+    "replace": "",
+    "guard": "meta check: \"these two lines\""
+  },
+  {
+    "id": "S03",
+    "file": "core/src/leaves.ts",
+    "find": "\\b|merged line|nothing",
+    "replace": "\\b|nothing",
+    "guard": "meta check: \"the merged line\""
+  },
+  {
+    "id": "S04",
+    "file": "core/src/leaves.ts",
+    "find": "|no lasting|",
+    "replace": "|",
+    "guard": "meta check: \"no lasting\""
+  },
+  {
+    "id": "S05",
+    "file": "core/src/leaves.ts",
+    "find": "nothing (of|with|in)\\b[^.]{0,40}\\b(lasting|worth|value|to (keep|summari[sz]e))",
+    "replace": "nothing_zzz",
+    "guard": "meta check: \"nothing of lasting\""
+  },
+  {
+    "id": "S06",
+    "file": "core/src/leaves.ts",
+    "find": "(this|the) (summary|merged line|message)\\b|",
+    "replace": "",
+    "guard": "meta check: \"this summary\""
+  },
+  {
+    "id": "S07",
+    "file": "core/src/leaves.ts",
+    "find": "Never mention summarizing, lines, the message or what you left out;",
+    "replace": "",
+    "guard": "leaf prompt forbids meta-commentary"
+  },
+  {
+    "id": "S08",
+    "file": "core/src/leaves.ts",
+    "find": "Never mention merging, lines, summaries or what you left out;",
+    "replace": "",
+    "guard": "merge prompt forbids meta-commentary"
+  },
+  {
+    "id": "H01",
+    "file": "core/src/util.ts",
+    "find": "HIGH = 32 * 1024",
+    "replace": "HIGH = 96 * 1024",
+    "guard": "default view cap is 32768 bytes"
+  },
+  {
+    "id": "F01",
+    "file": "core/src/index.ts",
+    "find": "      if (dryRun) return plan\n",
+    "replace": "",
+    "guard": "forgetSession dry run changes nothing"
+  },
+  {
+    "id": "F02",
+    "file": "core/src/index.ts",
+    "find": "db.prepare('INSERT OR IGNORE INTO forgotten (harness, session) VALUES (?,?)').run(h, s)\n",
+    "replace": "",
+    "guard": "forgetSession tombstones the session"
+  },
+  {
+    "id": "F03",
+    "file": "core/src/index.ts",
+    "find": "      if (isForgotten.get(item.harness, item.session)) continue\n",
+    "replace": "",
+    "guard": "ingest skips forgotten sessions"
+  },
+  {
+    "id": "F04",
+    "file": "core/src/index.ts",
+    "find": "        for (const f of cursors) db.prepare('DELETE FROM cursors WHERE file = ?').run(f)\n",
+    "replace": "",
+    "guard": "forgetSession drops the session's cursors"
+  },
+  {
+    "id": "F05",
+    "file": "core/src/index.ts",
+    "find": "DELETE FROM items; DELETE FROM items_fts;",
+    "replace": "DELETE FROM items;",
+    "guard": "forgetSession rebuilds the FTS rows"
+  },
+  {
+    "id": "F06",
+    "file": "core/src/index.ts",
+    "find": "DELETE FROM views; DELETE FROM views_log",
+    "replace": "DELETE FROM views_log",
+    "guard": "forgetSession clears views"
+  },
+  {
+    "id": "F07",
+    "file": "core/src/index.ts",
+    "find": "; DELETE FROM views_log')",
+    "replace": "')",
+    "guard": "forgetSession clears views_log (stale roots)"
+  },
+  {
+    "id": "F08",
+    "file": "core/src/index.ts",
+    "find": "if (sessions.length > 1) throw",
+    "replace": "if (false) throw",
+    "guard": "forgetSession refuses an ambiguous id"
+  },
+  {
+    "id": "F09",
+    "file": "core/src/index.ts",
+    "find": "if (ns !== undefined) insPin.run(",
+    "replace": "if (ns !== undefined || true) insPin.run(",
+    "guard": "forgetSession drops pins on removed items"
+  },
+  {
+    "id": "F10",
+    "file": "core/src/index.ts",
+    "find": "insPin.run(p.id, ns,",
+    "replace": "insPin.run(p.id, p.seq,",
+    "guard": "forgetSession remaps surviving pins"
+  },
+  {
+    "id": "F11",
+    "file": "core/src/index.ts",
+    "find": "db.prepare('DELETE FROM raw WHERE harness = ? AND session = ?').run(h, s)\n",
+    "replace": "",
+    "guard": "forgetSession drops the session's raw rows"
+  },
+  {
+    "id": "F12",
+    "file": "core/src/index.ts",
+    "find": "ingestItems(items, false)",
+    "replace": "ingestItems(items, true)",
+    "guard": "rebuild does not re-run auto-pin heuristics"
+  },
+  {
+    "id": "F13",
+    "file": "core/src/index.ts",
+    "find": "f.includes(s))",
+    "replace": "f.includes('\\u0000'))",
+    "guard": "forgetSession finds the session's cursor files"
+  }
+]

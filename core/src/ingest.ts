@@ -125,7 +125,8 @@ export function parseClaude(file: string, start: number, lookup: Lookup): Chunk 
     const session: string = d.sessionId
     const agent: string | undefined = typeof d.agentId === 'string' ? d.agentId : fileAgent ?? (d.isSidechain === true ? 'sidechain' : undefined)
     const ts = normTs(d.timestamp)
-    const base = { harness: 'claude' as const, session, ...(agent !== undefined ? { agent } : {}) }
+    // entrypoint sdk-cli = claude -p: a one-shot run, never a standing order.
+    const base = { harness: 'claude' as const, session, ...(agent !== undefined ? { agent } : {}), ...(d.entrypoint === 'sdk-cli' ? { oneShot: true } : {}) }
     const content = msg.content
     if (d.type === 'user') {
       if (typeof content === 'string') {
@@ -183,7 +184,7 @@ export function piHeader(file: string): { id: string; cwd: string } | null {
   return d && d.type === 'session' && typeof d.id === 'string' ? { id: d.id, cwd: String(d.cwd ?? '') } : null
 }
 
-export function parsePi(file: string, start: number, lookup: Lookup): Chunk {
+export function parsePi(file: string, start: number, lookup: Lookup, oneShot = false): Chunk {
   const head = piHeader(file)
   const { lines, end } = readLines(file, start)
   const items: NormItem[] = []
@@ -192,7 +193,7 @@ export function parsePi(file: string, start: number, lookup: Lookup): Chunk {
   let bad = 0
   if (head === null) return { items, raw, open: [], closed: [], end: start, bad: 0 }
   const session = head.id
-  const base = { harness: 'pi' as const, session }
+  const base = { harness: 'pi' as const, session, ...(oneShot ? { oneShot: true } : {}) }
   for (const line of lines) {
     const d = parse(line)
     if (d === undefined) continue

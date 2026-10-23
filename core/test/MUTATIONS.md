@@ -195,3 +195,45 @@ Test command: `node --test pi/test/extension.test.ts pi/test/plan.test.ts`
 | P2 | pi/src/extension.ts | drain capped at 8 rounds | killed |
 | P3 | pi/src/extension.ts | session_start drains the backlog | killed |
 | P4 | pi/src/extension.ts | drain ends when nothing is pending | equivalent: an empty round lands nothing, so the no-progress stop ends the drain too |
+
+## Pin, summary, cap and forget-session fixes: 36/36 killed
+Test command: `node --test core/test/*.test.ts` (D14: `node --test pi/test/*.test.ts`). Sweep files: `core/test/mutants.fix.json`, `pi/test/mutants.fix.json`. A first sweep left S02, S04, S05, F08, F11 alive (overlapping patterns in one test string; no ambiguity or raw-row test) and S03 unapplied (non-unique find); tests and the find were fixed, and those six were re-swept killed.
+
+| id | file | guard | result |
+|---|---|---|---|
+| D01 | core/src/pins.ts | directive: never from a one-shot run | killed |
+| D02 | core/src/pins.ts | directive: never from a subagent prompt | killed |
+| D03 | core/src/pins.ts | directive: only explicit standing-order words | killed |
+| D04 | core/src/pins.ts | directive: "don't ever" is a standing order | killed |
+| D05 | core/src/pins.ts | directive: double-quoted spans ignored | killed |
+| D06 | core/src/pins.ts | directive: inline code ignored | killed |
+| D07 | core/src/pins.ts | directive: fenced code ignored | killed |
+| D08 | core/src/pins.ts | directive: a question is not an order | killed |
+| D09 | core/src/pins.ts | directive: "every time" is a standing order | killed |
+| D10 | core/src/index.ts | ingest passes oneShot to the directive check | killed |
+| D11 | core/src/ingest.ts | claude -p transcripts (sdk-cli) are one-shot | killed |
+| D12 | core/src/ingest.ts | syncPi oneShot reaches the items | killed |
+| D13 | core/src/index.ts | syncPi forwards opts.oneShot | killed |
+| S01 | core/src/index.ts | put rejects meta-commentary | killed |
+| S02 | core/src/leaves.ts | meta check: "these two lines" | killed |
+| S03 | core/src/leaves.ts | meta check: "the merged line" | killed |
+| S04 | core/src/leaves.ts | meta check: "no lasting" | killed |
+| S05 | core/src/leaves.ts | meta check: "nothing of lasting" | killed |
+| S06 | core/src/leaves.ts | meta check: "this summary" | killed |
+| S07 | core/src/leaves.ts | leaf prompt forbids meta-commentary | killed |
+| S08 | core/src/leaves.ts | merge prompt forbids meta-commentary | killed |
+| H01 | core/src/util.ts | default view cap is 32768 bytes | killed |
+| F01 | core/src/index.ts | forgetSession dry run changes nothing | killed |
+| F02 | core/src/index.ts | forgetSession tombstones the session | killed |
+| F03 | core/src/index.ts | ingest skips forgotten sessions | killed |
+| F04 | core/src/index.ts | forgetSession drops the session's cursors | killed |
+| F05 | core/src/index.ts | forgetSession rebuilds the FTS rows | killed |
+| F06 | core/src/index.ts | forgetSession clears views | killed |
+| F07 | core/src/index.ts | forgetSession clears views_log (stale roots) | killed |
+| F08 | core/src/index.ts | forgetSession refuses an ambiguous id | killed |
+| F09 | core/src/index.ts | forgetSession drops pins on removed items | killed |
+| F10 | core/src/index.ts | forgetSession remaps surviving pins | killed |
+| F11 | core/src/index.ts | forgetSession drops the session's raw rows | killed |
+| F12 | core/src/index.ts | rebuild does not re-run auto-pin heuristics | killed |
+| F13 | core/src/index.ts | forgetSession finds the session's cursor files | killed |
+| D14 | pi/src/extension.ts | pi -p (no UI) syncs as one-shot | killed |

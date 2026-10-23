@@ -18,8 +18,9 @@ import { reach, fit, coverage, renderBlock } from './view.ts'
 import type { ViewState } from './view.ts'
 import { isDirective, toolKey, pinText, renderPins } from './pins.ts'
 import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
+import { META_OUTPUT } from './leaves.ts'
 import { NODE, PAGE, HIGH, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
-import type { NormItem, Store } from './types.ts'
+import type { NormItem, Store, ForgetPlan } from './types.ts'
 
 function schema(db: DatabaseSync): void {
   db.exec(`
@@ -83,6 +84,11 @@ function schema(db: DatabaseSync): void {
       kind TEXT NOT NULL,
       key TEXT,
       resolved INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS forgotten (
+      harness TEXT NOT NULL,
+      session TEXT NOT NULL,
+      PRIMARY KEY (harness, session)
     );
     CREATE TABLE IF NOT EXISTS cursors (
       file TEXT PRIMARY KEY,
@@ -174,7 +180,7 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
   const leafPrefix = (seq: number): string => prefix(getItem(seq).kind, leafTag(seq))
 
   // Ingest a batch of NormItems. Caller must already hold a transaction.
-  const ingestItems = (items: NormItem[]): { added: number; lastSeq: number } => {
+  const ingestItems = (items: NormItem[], autoPin = true): { added: number; lastSeq: number } => {
     let count = countItems()
     let added = 0
     const exists = db.prepare('SELECT seq FROM items WHERE harness = ? AND session = ? AND uuid = ?')
@@ -183,11 +189,13 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
     const insRaw = db.prepare('INSERT OR IGNORE INTO raw (harness, session, uuid, thinking) VALUES (?,?,?,?)')
     const insNode = db.prepare('INSERT INTO nodes (l, i, text, source, meta, mh, tries) VALUES (?,?,?,?,?,?,?)')
     const prev = db.prepare('SELECT harness, session FROM items WHERE seq = ?')
+    const isForgotten = db.prepare('SELECT 1 FROM forgotten WHERE harness = ? AND session = ?')
     const insPin = db.prepare('INSERT INTO pins (seq, reason, kind, key, resolved) VALUES (?,?,?,?,0)')
     const resolveFail = db.prepare('UPDATE pins SET resolved = 1 WHERE kind = ? AND key = ? AND resolved = 0')
 
     for (const item of items) {
       if (exists.get(item.harness, item.session, item.uuid)) continue
+      if (isForgotten.get(item.harness, item.session)) continue
       const seq = count
       count++
       const tool = item.kind === 'tool' ? (item.tool ?? { name: 'unknown', input: null, output: item.text, isError: false }) : null
@@ -232,8 +240,8 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
         i = pi
       }
 
-      if (isDirective(row)) insPin.run(seq, 'directive', 'directive', null)
-      const tk = toolKey(row)
+      if (autoPin && isDirective(row, item.oneShot === true)) insPin.run(seq, 'directive', 'directive', null)
+      const tk = autoPin ? toolKey(row) : null
       if (tk !== null) {
         if (!tk.ok) insPin.run(seq, 'failure', 'failure', tk.key)
         else resolveFail.run('failure', tk.key)
@@ -361,9 +369,9 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
       })
     },
 
-    syncPi(file) {
+    syncPi(file, o) {
       const off = cursorOffset(file)
-      const chunk = parsePi(file, off, lookup)
+      const chunk = parsePi(file, off, lookup, o?.oneShot === true)
       return tx(() => {
         const { added } = ingestItems(chunk.items)
         for (const r of chunk.raw) db.prepare('INSERT OR IGNORE INTO raw (harness, session, uuid, thinking) VALUES (?,?,?,?)').run(r.harness, r.session, r.uuid, r.thinking)
@@ -564,7 +572,7 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
       if (!cur) return false
       if (cur.source === 'det' || cur.source === 'verbatim') return false
       const t = oneLine(text)
-      if (t === '' || bytes(t) > NODE) {
+      if (t === '' || bytes(t) > NODE || META_OUTPUT.test(t)) {
         db.prepare('UPDATE nodes SET tries = tries + 1 WHERE l = ? AND i = ?').run(node.l, node.i)
         return false
       }
@@ -574,6 +582,71 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
         db.prepare('UPDATE nodes SET text = ?, source = ? WHERE l = ? AND i = ?').run(t, 'model', node.l, node.i)
       }
       return true
+    },
+
+    // Remove one session's items and rebuild the tree over what is left, so
+    // the log stays dense, hashed and consistent. `arg` is a session id, an
+    // unambiguous session-id prefix, or a leaf tag (c1234 / p1234).
+    forgetSession(arg, o) {
+      const dryRun = o?.dryRun === true
+      const all = db.prepare('SELECT DISTINCT harness, session FROM items').all() as { harness: string; session: string }[]
+      const hit = all.filter((r) => r.session === arg || (arg.length >= 4 && r.session.startsWith(arg)) || tag(r.harness as 'claude' | 'pi', r.session) === arg)
+      const exact = hit.filter((r) => r.session === arg)
+      const sessions = exact.length > 0 ? exact : hit
+      if (sessions.length === 0) throw new Error(`no session matches "${arg}"`)
+      if (sessions.length > 1) throw new Error(`"${arg}" is ambiguous: ${sessions.map((r) => `${r.harness}:${r.session}`).join(', ')}`)
+      const { harness: h, session: s } = sessions[0]
+      const seqs = (db.prepare('SELECT seq FROM items WHERE harness = ? AND session = ? ORDER BY seq').all(h, s) as { seq: number }[]).map((r) => Number(r.seq))
+      const gone = new Set(seqs)
+      const count = (sql: string): number => Number(db.prepare(sql).get(h, s).c)
+      const pinIds = (db.prepare('SELECT id, seq FROM pins').all() as { id: number; seq: number }[]).filter((p) => gone.has(Number(p.seq))).map((p) => Number(p.id))
+      // Cursor files belong to the session when the session id is in the path (Claude <id>.jsonl, Pi <ts>_<id>.jsonl).
+      const cursors = (db.prepare('SELECT file FROM cursors WHERE harness = ?').all(h) as { file: string }[]).map((r) => r.file).filter((f) => f.includes(s))
+      const plan: ForgetPlan = {
+        dryRun,
+        sessions: [{ harness: h, session: s }],
+        items: seqs,
+        ftsRows: seqs.length,
+        rawRows: count('SELECT COUNT(*) AS c FROM raw WHERE harness = ? AND session = ?'),
+        callRows: count('SELECT COUNT(*) AS c FROM calls WHERE harness = ? AND session = ?'),
+        pins: pinIds,
+        views: (db.prepare('SELECT harness, session FROM views WHERE harness = ? AND session = ?').all(h, s) as { harness: string; session: string }[]).map((r) => ({ harness: r.harness, session: r.session })),
+        cursors,
+        remaining: countItems() - seqs.length,
+        resets: 'remaining items are renumbered 0..remaining-1 and the whole tree is rebuilt (model summaries re-queue as clips); every other session view and the views_log are cleared (their seqs and roots no longer hold); the session is tombstoned so a later sync cannot re-ingest it',
+      }
+      if (dryRun) return plan
+      tx(() => {
+        type Old = { seq: number; harness: string; session: string; agent: string | null; uuid: string; kind: string; ts: string; text: string; meta: string | null }
+        const rows = db.prepare('SELECT seq, harness, session, agent, uuid, kind, ts, text, meta FROM items ORDER BY seq').all() as Old[]
+        const keep = rows.filter((r) => !gone.has(Number(r.seq)))
+        const keyOf = (r: { harness: string; session: string; uuid: string }): string => `${r.harness}\0${r.session}\0${r.uuid}`
+        const byKey = new Map<string, number>()
+        const oldSeqKey = new Map<number, string>()
+        for (const r of keep) oldSeqKey.set(Number(r.seq), keyOf(r))
+        const oldPins = db.prepare('SELECT id, seq, reason, kind, key, resolved FROM pins ORDER BY id').all() as { id: number; seq: number; reason: string; kind: string; key: string | null; resolved: number }[]
+        const items: NormItem[] = keep.map((r) => {
+          const meta = safeParse(r.meta)
+          const base = { harness: r.harness as 'claude' | 'pi', session: r.session, ...(r.agent !== null ? { agent: r.agent } : {}), uuid: r.uuid, kind: r.kind as 'user' | 'assistant' | 'tool', ts: r.ts }
+          return r.kind === 'tool'
+            ? { ...base, text: '', tool: { name: meta?.name ?? 'unknown', input: meta?.input ?? null, output: r.text, isError: meta?.isError === true } }
+            : { ...base, text: r.text }
+        })
+        db.exec('DELETE FROM items; DELETE FROM items_fts; DELETE FROM nodes; DELETE FROM pins; DELETE FROM views; DELETE FROM views_log')
+        db.prepare('DELETE FROM raw WHERE harness = ? AND session = ?').run(h, s)
+        db.prepare('DELETE FROM calls WHERE harness = ? AND session = ?').run(h, s)
+        for (const f of cursors) db.prepare('DELETE FROM cursors WHERE file = ?').run(f)
+        db.prepare('INSERT OR IGNORE INTO forgotten (harness, session) VALUES (?,?)').run(h, s)
+        ingestItems(items, false)
+        for (const r of db.prepare('SELECT seq, harness, session, uuid FROM items').all() as any[]) byKey.set(keyOf(r), Number(r.seq))
+        const insPin = db.prepare('INSERT INTO pins (id, seq, reason, kind, key, resolved) VALUES (?,?,?,?,?,?)')
+        for (const p of oldPins) {
+          const k = oldSeqKey.get(Number(p.seq))
+          const ns = k === undefined ? undefined : byKey.get(k)
+          if (ns !== undefined) insPin.run(p.id, ns, p.reason, p.kind, p.key, p.resolved)
+        }
+      })
+      return plan
     },
 
     forget(ref) {

@@ -6,11 +6,26 @@ import { PIN_BYTES, PIN_CLIP, bytes, clipMark, oneLine } from './util.ts'
 export type PinKind = 'directive' | 'failure' | 'manual'
 export type PinRow = { id: number; seq: number; reason: string; kind: PinKind; key: string | null }
 
-const DIRECTIVE = /\b(never|always|don't|do not|must|stop|remember|from now on)\b/i
+// Explicit standing-order language only (SPEC §5). Whole words, any case.
+const DIRECTIVE = /\b(always|never|from now on|don['\u2019]t ever|do not ever|remember that|every time)\b/i
 
-export function isDirective(item: ItemRow): boolean {
-  if (item.kind !== 'user' || [...item.text].length > 1000) return false
-  return item.text
+// Text with quoted spans and code removed: a standing-order word inside a quote
+// or code is being talked about, not given.
+export function unquoted(text: string): string {
+  return text
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/"[^"\n]*"/g, ' ')
+    .replace(/\u201c[^\u201d\n]*\u201d/g, ' ')
+    .replace(/(^|[\s(\[])'[^'\n]*'(?=[\s.,;:!?)\]]|$)/g, '$1 ')
+}
+
+// A user item pins as a directive only when a human said it in an interactive
+// session (not a one-shot -p run, not a subagent prompt) and a non-question
+// sentence carries standing-order language.
+export function isDirective(item: ItemRow, oneShot = false): boolean {
+  if (item.kind !== 'user' || oneShot || item.agent !== null || [...item.text].length > 1000) return false
+  return unquoted(item.text)
     .split(/(?<=[.!?\n])/)
     .map((s) => s.trim())
     .some((s) => s !== '' && !s.endsWith('?') && DIRECTIVE.test(s))

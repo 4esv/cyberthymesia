@@ -30,11 +30,12 @@ const result = (id: string, t: string) => ({ role: "toolResult", toolCallId: id,
 
 function fakeStore(seqByUuid: Map<string, number>, opts: { throwOn?: string } = {}) {
 	const calls: string[] = [];
+	const oneShots: boolean[] = [];
 	let tailStart = 0;
 	const block = () => `<memory>\n#0-${Math.max(0, tailStart - 1)}|summary up to ${tailStart}\n</memory>`;
-	const s: Store & { calls: string[] } = {
-		calls, root: "/r", dbPath: "/r/store.db",
-		syncPi(f) { calls.push(`syncPi ${path.basename(f)}`); return { added: 0 }; },
+	const s: Store & { calls: string[]; oneShots: boolean[] } = {
+		calls, oneShots, root: "/r", dbPath: "/r/store.db",
+		syncPi(f, o) { oneShots.push(o?.oneShot === true); calls.push(`syncPi ${path.basename(f)}`); return { added: 0 }; },
 		seqOf(h, sess, uuid) { if (opts.throwOn === "seqOf") throw new Error("boom"); return h === "pi" && sess === SESSION ? seqByUuid.get(uuid) : undefined; },
 		view(h, sess): View {
 			calls.push("view");
@@ -102,6 +103,16 @@ test("context: one view message first, then the tail; folds past TAIL at a user 
 	assert.equal((out[1].content as any)[0].text, "second task");
 	// view before sync (a new session's tailStart is fixed before its messages land)
 	assert.deepEqual(store.calls.slice(0, 2), ["view", "syncPi session.jsonl"]);
+});
+
+test("ingest: an interactive session syncs as a human's words, a no-UI (pi -p) run as one-shot", () => {
+	const a = setup();
+	a.pi.emit("context", { messages: a.messages() }, a.ctx);
+	assert.deepEqual([...new Set(a.store.oneShots)], [false]);
+	const b = setup();
+	const ctx = { ...b.ctx, hasUI: false };
+	b.pi.emit("context", { messages: b.messages() }, ctx);
+	assert.deepEqual([...new Set(b.store.oneShots)], [true]);
 });
 
 test("context: view block bytes stable between folds", () => {

@@ -38,6 +38,7 @@ transaction (rollback on throw). Never hold a transaction across anything slow.
   PRIMARY KEY(harness, session)).
 - views_log(id INTEGER PRIMARY KEY, ts, harness, session, n, root, view_end, tail_start, sha, bytes).
 - pins(id INTEGER PRIMARY KEY, seq, reason, kind, key NULL, resolved INTEGER DEFAULT 0).
+- forgotten(harness, session, PRIMARY KEY(harness, session)): sessions removed by forgetSession (SPEC §8a); ingest skips them.
 - cursors(file TEXT PRIMARY KEY, harness, offset INTEGER).
 - calls(harness, session, id, agent NULL, name, input TEXT JSON, ts, PRIMARY KEY(harness, session, id)):
   tool calls still waiting for a result, carried across syncs.
@@ -58,10 +59,10 @@ with the same key. Heuristics never resolve directive/manual pins.
   nonzero number (a leading "Exit code N", or a trailing "Command exited with code N" line).
   The output text alone never marks a tool ERR — a successful `grep` whose output prints
   "... publish attempt failed" stays ok. tailLine still chooses which line the digest shows.
-- isDirective(item): a user item of at most 1000 chars is a directive only if, split into
-  sentences on `.` `!` `?` or newline, some sentence matches
-  /\b(never|always|don't|do not|must|stop|remember|from now on)\b/i and that sentence does
-  not end with "?" (after trimming). A question containing a keyword is not a directive.
+- isDirective(item, oneShot): SPEC §5. Only explicit standing-order words
+  (always|never|from now on|don't ever|do not ever|remember that|every time), on a sentence
+  that does not end in "?", after quotes and code are removed; never for a one-shot run
+  (NormItem.oneShot) or an item with an agent.
 Returns {added, lastSeq: count-1} (-1 when empty).
 
 ## sync / backfill
@@ -124,8 +125,8 @@ Returns {added, lastSeq: count-1} (-1 when empty).
   Leaf prompt = leafPrompt(item text) (the item's full text); merge = mergePrompt(childA.text,
   childB.text) with current child texts. Returns [{ref: refOf(l,i), prompt}].
 - put(ref, text): t = oneLine(text). Reject (return false) if the ref is not a node, its
-  source is det or verbatim, t is empty or bytes(t) > NODE. On a reject of a clip/model node
-  by length, increment tries. Accept: leaf → leafModel(prefix(kind, tag-or-null as at
+  source is det or verbatim, t is empty, bytes(t) > NODE, or t matches META_OUTPUT (leaves.ts). On a reject of a clip/model node
+  by length or meta-commentary, increment tries. Accept: leaf → leafModel(prefix(kind, tag-or-null as at
   build), t); merge → t. source 'model'. Returns true. Never changes snapshots in views.
 - forget(ref): a model node goes back to its clip text (leaf: leafText again; merge: mergeClip
   of the children's current texts), source clip, tries 0. Other sources: no-op.

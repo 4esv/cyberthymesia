@@ -62,8 +62,14 @@ Node `source` ∈ `verbatim` | `det` | `model` | `clip`:
 **Model summary prompts** (built by core, run by the adapters on whatever model
 they have):
 
-- leaf: `Compress this message into one line of at most 512 bytes. Keep what has lasting effect (decisions, facts, names, numbers, paths); drop the rest. Invent nothing.` + `<input>…</input>`
-- merge: `Merge these two adjacent lines into one line of at most 512 bytes. Keep what has lasting effect; drop what does not. Invent nothing.` + both child lines.
+- leaf: `Write one line of at most 512 bytes that states what this message says: its decisions, facts, names, numbers and paths. State the content itself. Never mention summarizing, lines, the message or what you left out; if little is worth keeping, state its first point plainly. Invent nothing.` + `<input>…</input>`
+- merge: `Write one line of at most 512 bytes that states what these two adjacent lines say together: their decisions, facts, names, numbers and paths. State the content itself. Never mention merging, lines, summaries or what you left out; if little is worth keeping, state the first point plainly. Invent nothing.` + both child lines.
+
+A summary states content; it never talks about summarizing. `put` rejects, as a
+failed try, an empty reply and any reply matching the meta-commentary check
+(`META_OUTPUT` in `core/src/leaves.ts`: "these two lines", "the merged line",
+"this summary", "nothing of lasting …", "lasting effect", …). After two failed
+tries a node keeps its clipped verbatim text.
 
 A reply that is longer than NODE gets one retry with `Too long: N bytes, limit 512. Cut the least valuable items.`, then falls back to `clip`.
 
@@ -83,7 +89,7 @@ stay stable between batches (prompt cache).
   `bytes ≤ HIGH/2`. One batch per crossing. Merged parts snapshot their current
   text.
 - **Convergence:** all-merged is the popcount(viewEnd) roots, ≤ 31 × NODE
-  = 15.9 KB < HIGH/2 for any HIGH ≥ 32 KB, so `fit` always terminates under budget.
+  = 15.9 KB < HIGH/2 = 16 KB at the default HIGH = 32 KB, and for any larger HIGH, so `fit` always terminates under budget.
 - **Rendering** (one text block, the order IS the cache layout):
   1. the contract (§7), stable. It travels only inside this block, so a model
      is told about `<memory>` exactly when `<memory>` is in its context;
@@ -96,7 +102,7 @@ stay stable between batches (prompt cache).
 - **Fold.** When the raw tail exceeds `TAIL` bytes, move `tailStart` forward to
   a user-message boundary that leaves about `TAIL/2` raw (never between a tool call
   and its result), then `reach(tailStart)` and `fit()`.
-- Defaults: `HIGH = 96 KB`, `TAIL = 160 KB` (≈ 27k + 45k tokens). Per-harness
+- Defaults: `HIGH = 32 KB` (32768 bytes of `<memory>` lines, ≈ 9k tokens), `TAIL = 160 KB` (≈ 45k tokens). Per-harness
   overrides in env `CYTH_HIGH`, `CYTH_TAIL`.
 
 ## 4. Search and zoom
@@ -117,9 +123,17 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
 
 - Auto-pin at ingest (heuristics, can only ADD):
   - `directive`: a `user` item ≤ 1000 chars with a sentence (split after
-    `.` `!` `?` or a line break) that matches
-    `/\b(never|always|don't|do not|must|stop|remember|from now on)\b/i` and
-    does not end in `?`. "Why don't we …?" is a question, not an order.
+    `.` `!` `?` or a line break) that matches the standing-order words
+    `/\b(always|never|from now on|don't ever|do not ever|remember that|every time)\b/i`
+    (whole words) and does not end in `?`. Quoted spans (`"…"`, `“…”`, `'…'`) and
+    code (`` `…` ``, fenced blocks) are removed first: a word inside them is
+    being talked about, not given. Never a directive: a task request or question
+    without such words, a user item with an `agent` (a subagent's prompt, not a
+    human), or any item of a one-shot non-interactive run (`NormItem.oneShot`:
+    Claude transcripts with `entrypoint: "sdk-cli"` = `claude -p`; Pi when the
+    extension's `ctx.hasUI` is not true = `pi -p`, passed as `syncPi(file,
+    {oneShot: true})` / `cyth sync-pi --one-shot`). A false pin is misdirection,
+    since `<pinned>` reads as standing orders.
   - `failure`: a `tool` item with status `ERR`. Auto-resolves when a later
     tool item with the same normalized key arg (same Bash command, same file
     for Edit/Write) has status `ok`.
@@ -183,7 +197,7 @@ interface Store {
   root: string; dbPath: string
   ingest(items: NormItem[]): { added: number; lastSeq: number }  // idempotent
   syncClaude(transcriptPath: string): { added: number }   // byte cursor per file
-  syncPi(sessionPath: string): { added: number }
+  syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number }
   backfill(opts: { claudeDir?: string; piDir?: string }): { added: number } // this project's sessions, merged by ts
   seqOf(harness, session, uuid): number | undefined
   view(harness, session, opts?: { high?: number; tail?: number; tailStart?: number }): {
@@ -195,6 +209,7 @@ interface Store {
   pending(limit: number): { ref: string; prompt: string }[]
   put(ref: string, text: string): boolean            // model summary, validated ≤ NODE
   forget(ref: string): void
+  forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan  // §8a
   status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string }
   verify(): { ok: boolean; problems: string[] }
   close(): void
@@ -209,8 +224,22 @@ CLI `core/bin/cyth.ts` (run with `node`): `status | sync-claude <file> |
 sync-pi <file> | backfill [--claude DIR] [--pi DIR] | view <harness> <session>
 | fold <harness> <session> <seq> | zoom <ref> | search <q> [--regex] | pin <ref>
 <reason> | unpin <id> | pins | pending [--limit N] | put <ref> <text> | forget
-<ref> | verify`. Global `--cwd DIR` (default cwd) and `--json`. Exit ≠ 0 on error,
+<ref> | forget-session <id|tag> [--dry-run] | verify`. `sync-pi` takes `--one-shot`. Global `--cwd DIR` (default cwd) and `--json`. Exit ≠ 0 on error,
 message on stderr.
+
+### 8a. `forgetSession`
+
+Removes one session (`arg` = session id, an unambiguous id prefix of ≥ 4 chars,
+or a leaf tag like `p1be2`; ambiguity is an error) from a store, consistently,
+in one transaction: its items, FTS rows, `raw` and pending `calls` rows, its
+ingest cursors (files whose path holds the session id), and the pins on its
+items. The log stays dense, so the remaining items are renumbered `0..n-1`,
+re-hashed and the whole tree rebuilt (model summaries re-queue as clips); manual
+and surviving auto pins follow their items (same ids); every `views` row and the
+`views_log` are cleared, because their seqs and roots no longer hold. The
+session goes into `forgotten`, so a later sync, backfill or ingest of it adds
+nothing. `{dryRun: true}` returns the same `ForgetPlan` (items, fts rows, raw,
+calls, pins, views, cursors, remaining) and changes nothing.
 
 ## 9. Adapters
 

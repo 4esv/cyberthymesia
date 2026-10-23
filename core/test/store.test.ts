@@ -101,21 +101,40 @@ test('pins: directive, failure, auto-resolve by key, no false pins', () => {
   assert.doesNotMatch(s.pins(), /failure/)
 })
 
-test('isDirective: only a non-question sentence with a keyword pins', () => {
+test('isDirective: only explicit standing-order language in a real human message pins', () => {
   const { s } = mk()
   const directives = [
-    "I never want to submit a report I can't repro. Run what's needed.",
+    "I never want to submit a report I can't repro and submit to the standards I'd want from a report I'd receive.",
     'From now on, use tabs',
-    "don't push",
+    "don't ever push to main",
+    'Remember that the vault stays out of git.',
+    'Run the tests every time you edit core.',
+    'Always rebase.',
   ]
   const notDirectives = [
-    "Why don't we make pi name things properly? does pi care? What's taking so long? I want to assume github.",
+    "Why don't we make pi name things properly? does pi care?",
     'Should we always rebase?',
+    "Use the edit tool on the file ~/x.md: replace its first body sentence with 'TEST EDIT' and do not touch anything else.",
+    'go for it on fixing Rc',
+    'reply OK',
+    'I must stop and think; you should not do this.',
+    'He said "never push to main" and left.',
+    'Run `git push --always` please.',
+    'Print:\n```\nalways\n```',
   ]
   s.ingest(directives.map((text, k) => user(text, 'sess1', 'd' + k)))
   assert.equal(s.status().pins, directives.length)
   s.ingest(notDirectives.map((text, k) => user(text, 'sess1', 'n' + k)))
   assert.equal(s.status().pins, directives.length)
+})
+
+test('isDirective: never from a one-shot run or a subagent prompt', () => {
+  const { s } = mk()
+  const words = 'Always answer in French.'
+  s.ingest([{ ...user(words, 'sess1', 'a'), oneShot: true }, { ...user(words, 'sess1', 'b'), agent: 'sub1' }])
+  assert.equal(s.status().pins, 0)
+  s.ingest([user(words, 'sess1', 'c')])
+  assert.equal(s.status().pins, 1)
 })
 
 test('failure pin from a successful tool is never created', () => {
@@ -283,7 +302,7 @@ test('resolveHigh: zero and bad values fall back; CYTH_HIGH honoured', () => {
   for (let k = 0; k < 20; k++) items.push(user('message number ' + k + ' with filler words here', 'sess1', 'r' + k))
   s.ingest(items)
   const lines = (b: string) => b.split('\n').filter((l) => /^#\d/.test(l)).length
-  assert.equal(lines(s.view('c', 'z', { high: 0 }).block), 20) // 0 -> default (96K): no merging
+  assert.equal(lines(s.view('c', 'z', { high: 0 }).block), 20) // 0 -> default (32K): no merging
   const saved = process.env.CYTH_HIGH
   try {
     process.env.CYTH_HIGH = '0'
@@ -574,4 +593,131 @@ test('commit is durable across a reopened store', () => {
   const t = openStore(cwd, { home })
   assert.equal(t.status().items, 1)
   t.close()
+})
+
+test('put: meta-commentary is rejected, counts as a try, and the node keeps its clip', () => {
+  const { s, db } = mk()
+  s.ingest([user(long('alpha'), 'sess1', 'm0'), user(long('beta'), 'sess1', 'm1')])
+  const metas = [
+    'Nothing in these two lines has lasting effect, so the merged line is empty.',
+    'The merged line: nothing of lasting value.',
+    'This summary covers the earlier discussion.',
+    'There is nothing worth keeping here.',
+    'No lasting effect.',
+  ]
+  for (const m of metas) assert.equal(s.put('#0-1', m), false, m)
+  assert.equal(nodeRow(db(), 1, 0).source, 'clip')
+  assert.ok(nodeRow(db(), 1, 0).tries >= 2) // pending() stops offering it, so the clip stays
+  assert.deepEqual(s.pending(10).map((x) => x.ref), ['#1', '#0'])
+  assert.equal(s.put('#0-1', 'Axel chose tabs over spaces for core/src.'), true)
+  assert.equal(nodeRow(db(), 1, 0).source, 'model')
+})
+
+test('summary prompts ask for content and forbid talking about summarizing', () => {
+  const { s } = mk()
+  s.ingest([user(long('alpha'), 'sess1', 'q0'), user(long('beta'), 'sess1', 'q1')])
+  for (const p of s.pending(10)) {
+    assert.match(p.prompt, /Never mention/)
+    assert.doesNotMatch(p.prompt, /lasting effect/)
+  }
+})
+
+test('default view cap is 32768 bytes', async () => {
+  const { HIGH } = await import('../src/util.ts')
+  assert.equal(HIGH, 32768)
+  const { s } = mk()
+  const saved = process.env.CYTH_HIGH
+  delete process.env.CYTH_HIGH
+  try {
+    s.ingest(Array.from({ length: 400 }, (_, k) => user(long('w' + k, 480), 'sess1', 'h' + k)))
+    const v = s.view('claude', 'other')
+    const mem = v.block.slice(v.block.indexOf('<memory>'), v.block.indexOf('</memory>'))
+    assert.ok(bytes(mem) <= 32768, `memory ${bytes(mem)}`)
+    assert.ok(bytes(mem) > 16384 - 600, 'fit lands near HIGH/2, not at the old 96 KB')
+  } finally {
+    if (saved !== undefined) process.env.CYTH_HIGH = saved
+  }
+})
+
+test('forgetSession: dry run lists exactly what goes and changes nothing; real run is consistent', () => {
+  const { s, db } = mk()
+  s.ingest([
+    user('keep one', 'keep1', 'a0'),
+    user('Always answer in French.', 'gone9xyz', 'g0'),
+    tool('Bash', { command: 'echo gone' }, 'gone out', false, 'gone9xyz', 'g1'),
+    asst('keep two', 'keep1', 'a1'),
+    user('keep three never push', 'keep1', 'a2'),
+    tool('Bash', { command: 'false' }, 'Exit code 1\nboom', true, 'keep1', 'a3'),
+  ])
+  const pk = s.pin('#2', 'mine')
+  s.pin('#3', 'kept')
+  db().prepare('INSERT INTO cursors (file, harness, offset) VALUES (?,?,?)').run('/x/gone9xyz.jsonl', 'claude', 99)
+  db().prepare('INSERT INTO cursors (file, harness, offset) VALUES (?,?,?)').run('/x/keep1.jsonl', 'claude', 5)
+  s.view('claude', 'keep1')
+  const before = JSON.stringify(db().prepare('SELECT * FROM items ORDER BY seq').all())
+  const dry = s.forgetSession('gone9xyz', { dryRun: true })
+  assert.equal(dry.dryRun, true)
+  assert.deepEqual(dry.items, [1, 2])
+  assert.deepEqual(dry.cursors, ['/x/gone9xyz.jsonl'])
+  assert.equal(dry.remaining, 4)
+  assert.equal(dry.pins.includes(pk), true)
+  assert.equal(JSON.stringify(db().prepare('SELECT * FROM items ORDER BY seq').all()), before)
+  assert.equal(s.status().items, 6)
+
+  const real = s.forgetSession(tag('claude', 'gone9xyz'))
+  assert.deepEqual(real.items, dry.items)
+  assert.equal(s.status().items, 4)
+  assert.deepEqual(s.verify(), { ok: true, problems: [] })
+  assert.equal(db().prepare('SELECT COUNT(*) AS c FROM items_fts').get().c, 4)
+  assert.equal(db().prepare("SELECT COUNT(*) AS c FROM items WHERE session = 'gone9xyz'").get().c, 0)
+  assert.equal(db().prepare('SELECT COUNT(*) AS c FROM views').get().c, 0)
+  assert.deepEqual(db().prepare('SELECT file FROM cursors').all().map((r: any) => r.file), ['/x/keep1.jsonl'])
+  assert.doesNotMatch(s.search('French'), /#\d/)
+  // pins: the pin on a removed item is gone, the pin on a kept item follows its item to seq 1
+  assert.match(s.pins(), /\[\d+\] #1 manual: kept \| keep two/)
+  assert.doesNotMatch(s.pins(), /mine/)
+  // a later sync of the forgotten session adds nothing
+  assert.equal(s.ingest([user('Always answer in French.', 'gone9xyz', 'g0'), user('late', 'gone9xyz', 'g9')]).added, 0)
+  assert.equal(s.status().items, 4)
+  assert.throws(() => s.forgetSession('nope'), /no session/)
+})
+
+test('claude parser: entrypoint sdk-cli (claude -p) is one-shot, cli is not', () => {
+  const { s, cwd } = mk()
+  const rec = (n: string, entrypoint: string, text: string) => JSON.stringify({ type: 'user', uuid: n, sessionId: n, timestamp: '2026-01-01T00:00:00Z', cwd, entrypoint, message: { role: 'user', content: text } })
+  const f = join(cwd, 'c.jsonl')
+  writeFileSync(f, rec('print1', 'sdk-cli', 'Never touch the prod db.') + '\n' + rec('human1', 'cli', 'Never touch the prod db.') + '\n')
+  assert.equal(s.syncClaude(f).added, 2)
+  assert.match(s.pins(), /^\[1\] #1 directive/)
+  assert.equal(s.status().pins, 1)
+})
+
+test('put: each meta-commentary pattern rejects on its own', () => {
+  const { s } = mk()
+  const metas = [
+    'These two lines describe the port change.', // "these two lines"
+    'Merged line: the build passed.', // "merged line"
+    'No lasting changes were made.', // "no lasting"
+    'Nothing of lasting interest happened.', // "nothing of … lasting"
+    'This summary covers the port change.', // "this summary"
+  ]
+  for (const [k, m] of metas.entries()) {
+    s.ingest([user(long('a' + k), 'sess1', 'p' + k + 'a'), user(long('b' + k), 'sess1', 'p' + k + 'b')])
+    assert.equal(s.put(`#${k * 2}-${k * 2 + 1}`, m), false, m)
+    assert.equal(s.put(`#${k * 2}-${k * 2 + 1}`, 'The port moved to 8443.'), true)
+  }
+})
+
+test('forgetSession: ambiguous prefix refuses; the session raw rows go', () => {
+  const { s, db } = mk()
+  s.ingest([
+    { ...user('hello', 'abcd-1', 'x0'), thinking: 'private' },
+    user('hi', 'abcd-2', 'x1'),
+    user('stay', 'zzzz', 'x2'),
+  ])
+  assert.throws(() => s.forgetSession('abcd'), /ambiguous/)
+  assert.equal(s.status().items, 3)
+  s.forgetSession('abcd-1')
+  assert.equal(db().prepare('SELECT COUNT(*) AS c FROM raw').get().c, 0)
+  assert.equal(s.status().items, 2)
 })

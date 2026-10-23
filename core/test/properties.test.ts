@@ -108,7 +108,7 @@ function genStream(seed: number, n: number): NormItem[] {
     const t = r.next()
     if (t < 0.3) {
       const dir = r.chance(0.12)
-      const text = dir ? r.pick(['never ', 'Always ', 'from now on ', 'Do not ', 'you must ']) + words(r, r.int(10, 300)) : words(r, size(r))
+      const text = dir ? r.pick(['never ', 'Always ', 'from now on ', 'Do not ever ', 'remember that ']) + words(r, r.int(10, 300)) : words(r, size(r))
       out.push({ ...base, kind: 'user', text })
     } else if (t < 0.6) {
       out.push({ ...base, kind: 'assistant', text: words(r, size(r)) })
@@ -468,7 +468,7 @@ function pinLines(s: Store): { id: number; seq: number; kind: string }[] {
   })
 }
 
-const isDir = (it: NormItem): boolean => it.kind === 'user' && [...it.text].length <= 1000 && /\b(never|always|don't|do not|must|stop|remember|from now on)\b/i.test(it.text)
+const isDir = (it: NormItem): boolean => it.kind === 'user' && [...it.text].length <= 1000 && /\b(never|always|don't ever|do not ever|remember that|every time|from now on)\b/i.test(it.text)
 
 test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a pin', () => {
   let over = 0
