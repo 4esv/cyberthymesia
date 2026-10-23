@@ -1,0 +1,9 @@
+{
+  "name": "cyberthymesia",
+  "version": "0.1.0",
+  "description": "Every chat goes forever: compaction becomes a decaying-detail view over a lossless project log, with memory_zoom/search/pin tools.",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Axel Stevens"
+  }
+}

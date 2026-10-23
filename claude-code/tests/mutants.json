@@ -1,0 +1,121 @@
+[
+ {
+  "id": "M1",
+  "file": "claude-code/hooks/register.ts",
+  "find": "return (await $.env.get('CYTH_DISABLE')) === '1'",
+  "replace": "return false",
+  "guard": "CYTH_DISABLE kill switch"
+ },
+ {
+  "id": "M2",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (r.exitCode !== 0) {\n    throw new Error(`cyth ",
+  "replace": "if (false) {\n    throw new Error(`cyth ",
+  "guard": "nonzero CLI exit throws"
+ },
+ {
+  "id": "M3",
+  "file": "claude-code/hooks/register.ts",
+  "find": "      failNote($, 'compaction', err)\n      return next(e)",
+  "replace": "      failNote($, 'compaction', err)\n      return { skip: 'mutant' }",
+  "guard": "compaction fails open to native"
+ },
+ {
+  "id": "M4",
+  "file": "claude-code/hooks/register.ts",
+  "find": "      failNote($, 'compaction', err)\n      return next(e)",
+  "replace": "      return next(e)",
+  "guard": "compaction failure sets a status line"
+ },
+ {
+  "id": "M5",
+  "file": "claude-code/hooks/register.ts",
+  "find": "return { deny: `${name}: ${err instanceof Error ? err.message : String(err)}` }",
+  "replace": "return { result: '' }",
+  "guard": "tool failure denies"
+ },
+ {
+  "id": "M6",
+  "file": "claude-code/hooks/tail.ts",
+  "find": "for (let k = i + 1; k <= j; k++) clean[k] = false",
+  "replace": "for (let k = i + 1; k < j; k++) clean[k] = false",
+  "guard": "tail never splits a use from its result (edge)"
+ },
+ {
+  "id": "M7",
+  "file": "claude-code/hooks/tail.ts",
+  "find": "if (j !== undefined) for",
+  "replace": "if (false) for",
+  "guard": "tail no-split check"
+ },
+ {
+  "id": "M8",
+  "file": "claude-code/hooks/register.ts",
+  "find": "i.regex === true ? ['--regex'] : []",
+  "replace": "[]",
+  "guard": "regex flag forwarded"
+ },
+ {
+  "id": "M9",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (e.trigger === 'precompute') return",
+  "replace": "if (false) return",
+  "guard": "precompute skipped"
+ },
+ {
+  "id": "M10",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (seq === undefined) throw",
+  "replace": "if (false) throw",
+  "guard": "tail start must be in store before fold"
+ },
+ {
+  "id": "M11",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (block.trim() === '') throw",
+  "replace": "if (false) throw",
+  "guard": "empty view block rejected"
+ },
+ {
+  "id": "M12",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (cut === undefined) throw",
+  "replace": "if (false) throw",
+  "guard": "no clean boundary rejected"
+ },
+ {
+  "id": "M13",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (await disabled($)) return composed",
+  "replace": "",
+  "guard": "contract not injected when disabled"
+ },
+ {
+  "id": "M14",
+  "file": "claude-code/hooks/register.ts",
+  "find": "if (await disabled($)) return done",
+  "replace": "",
+  "guard": "no after-turn work when disabled"
+ },
+ {
+  "id": "M15",
+  "file": "claude-code/hooks/register.ts",
+  "find": "(context.tokens ?? 0) > at",
+  "replace": "(context.tokens ?? 0) >= at",
+  "guard": "compaction threshold strict"
+ },
+ {
+  "id": "M16",
+  "file": "claude-code/hooks/tail.ts",
+  "find": "if (!clean[i] || !ok(messages[i]!)) continue",
+  "replace": "if (!ok(messages[i]!)) continue",
+  "guard": "pick respects clean cuts"
+ },
+ {
+  "id": "M17",
+  "file": "claude-code/hooks/register.ts",
+  "find": "    failNote($, 'ingest', err)\n    return",
+  "replace": "    return",
+  "guard": "ingest failure surfaces a status line"
+ }
+]
