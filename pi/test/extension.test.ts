@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createExtension, CONTRACT, piUuid, type Core, type Store, type View } from "../src/extension.ts";
+import { createExtension, piUuid, type Core, type Store, type View } from "../src/extension.ts";
 import type { Msg } from "../src/plan.ts";
 
 type Handler = (e: any, ctx: any) => any;
@@ -164,12 +164,9 @@ test("session_before_compact: our compaction, view as summary, first tail entry 
 	assert.equal(r.compaction.firstKeptEntryId, "e4");
 });
 
-test("before_agent_start: contract appended, byte-stable", () => {
+test("before_agent_start: no system-prompt contract (the view block carries it)", () => {
 	const { pi, ctx } = setup();
-	const a = pi.emit("before_agent_start", { systemPrompt: "base" }, ctx);
-	const b = pi.emit("before_agent_start", { systemPrompt: "base" }, ctx);
-	assert.equal(a.systemPrompt, `base\n\n${CONTRACT}`);
-	assert.equal(a.systemPrompt, b.systemPrompt);
+	assert.equal(pi.emit("before_agent_start", { systemPrompt: "base" }, ctx), undefined);
 });
 
 test("tools: five memory tools, thin calls into core", async () => {
@@ -181,12 +178,13 @@ test("tools: five memory tools, thin calls into core", async () => {
 	assert.equal(p.content[0].text, "pinned as 7");
 });
 
-test("summaries: pending -> model -> put, retry once when too long, bounded to the batch", async () => {
+test("summaries: pending -> model -> put, retry once when too long, drained in batches", async () => {
 	const { pi, ctx, store } = setup({ CYTH_SUMMARY_BATCH: "2" });
 	const jobs = [{ ref: "#0-1", prompt: "p0" }, { ref: "#2-3", prompt: "p1" }, { ref: "#4-5", prompt: "p2" }];
 	const puts: [string, string][] = [];
-	store.pending = (n) => jobs.slice(0, n);
-	store.put = (ref, t) => { puts.push([ref, t]); return true; };
+	const done = new Set<string>();
+	store.pending = (n) => jobs.filter((j) => !done.has(j.ref)).slice(0, n);
+	store.put = (ref, t) => { puts.push([ref, t]); done.add(ref); return true; };
 	const asked: string[] = [];
 	(ctx as any).model = { provider: "deepseek", id: "flash" };
 	(ctx as any).modelRegistry = {
@@ -200,6 +198,41 @@ test("summaries: pending -> model -> put, retry once when too long, bounded to t
 	};
 	pi.emit("agent_end", { messages: [] }, ctx);
 	await new Promise((r) => setTimeout(r, 20));
-	assert.deepEqual(asked, ["flash:p0", "flash:p0", "flash:p1"]); // cheapest same-provider; one retry; batch of 2
-	assert.deepEqual(puts, [["#2-3", "sum of p1"]]); // p0 stayed too long: clip kept, not put
+	// cheapest same-provider; one retry; batch of 2, then a second round for the rest
+	assert.deepEqual(asked, ["flash:p0", "flash:p0", "flash:p1", "flash:p2"]);
+	assert.deepEqual(puts, [["#2-3", "sum of p1"], ["#4-5", "sum of p2"]]); // p0 stayed too long: clip kept, not put
+});
+
+function backlog(ctx: any, store: any, n: number, putOk = true) {
+	let left = n;
+	let puts = 0;
+	store.pending = (k: number) => Array.from({ length: Math.min(k, left) }, (_, i) => ({ ref: `#${puts}-${i}`, prompt: "p" }));
+	store.put = () => { puts++; if (putOk) left--; return putOk; };
+	ctx.model = { provider: "deepseek", id: "flash" };
+	ctx.modelRegistry = { getAvailable: () => [], complete: async () => ({ content: [{ type: "text", text: "s" }], stopReason: "stop" }) };
+	return () => puts;
+}
+
+test("summaries: a drain stops at 8 rounds", async () => {
+	const { pi, ctx, store } = setup();
+	const puts = backlog(ctx, store, 1000);
+	pi.emit("agent_end", { messages: [] }, ctx);
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal(puts(), 32);
+});
+
+test("summaries: a round that lands nothing ends the drain", async () => {
+	const { pi, ctx, store } = setup();
+	const puts = backlog(ctx, store, 1000, false);
+	pi.emit("agent_end", { messages: [] }, ctx);
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal(puts(), 4);
+});
+
+test("summaries: session_start drains the backlog", async () => {
+	const { pi, ctx, store } = setup();
+	const puts = backlog(ctx, store, 5);
+	pi.emit("session_start", {}, ctx);
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal(puts(), 5);
 });

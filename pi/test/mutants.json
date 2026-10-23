@@ -1,0 +1,30 @@
+[
+ {
+  "id": "P1",
+  "file": "pi/src/extension.ts",
+  "find": "\t\t\tif (!landed) break;",
+  "replace": "",
+  "guard": "drain stops after a round that lands nothing"
+ },
+ {
+  "id": "P2",
+  "file": "pi/src/extension.ts",
+  "find": "for (let round = 0; round < rounds; round++)",
+  "replace": "for (let round = 0; round < 1000; round++)",
+  "guard": "drain capped at 8 rounds"
+ },
+ {
+  "id": "P3",
+  "file": "pi/src/extension.ts",
+  "find": "\t\t\tvoid summarize(ctx, s); // the backlog other sessions left",
+  "replace": "",
+  "guard": "session_start drains the backlog"
+ },
+ {
+  "id": "P4",
+  "file": "pi/src/extension.ts",
+  "find": "\t\t\tif (!jobs.length) break;",
+  "replace": "\t\t\tif (!jobs.length) continue;",
+  "guard": "drain ends when nothing is pending"
+ }
+]

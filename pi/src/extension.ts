@@ -7,7 +7,8 @@
 //  compact    session_before_compact returns OUR compaction (view block as the summary,
 //             first tail entry kept): Pi's summarizer never runs, and an overflow still retries.
 //  tools      memory_zoom / memory_find / memory_pin / memory_unpin / memory_pins.
-//  summaries  agent_end: pending(N) -> cheapest model -> put. Background, one batch at a time.
+//  summaries  agent_end and session_start: pending(N) -> cheapest model -> put, in rounds until
+//             nothing is pending, a round lands nothing, or ROUNDS batches ran. Background.
 //  fail open  any error -> the hook returns nothing (Pi's native context) + one notify.
 //             CYTH_DISABLE=1 -> nothing is registered beyond a status line.
 //
@@ -72,19 +73,8 @@ export const HARNESS = "pi";
 const NODE = 512;
 const STATUS_KEY = "cyth";
 
-// SPEC §7, verbatim. Appended to the system prompt; never changes, so it never breaks the cache.
-export const CONTRACT = `## Memory: cyberthymesia
-This conversation never ends; nothing is ever lost. <memory> lists the project's
-whole history as a binary tree of one-line summaries, oldest first: \`#a-b|...\`
-covers items a..b, \`#n|...\` is one item. Detail fades with age. The raw messages
-after it are the recent present, verbatim.
-- The latest word on a thing is the truth. Before you act, guess or ask about
-  anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): open #a-b into its halves; #n gives the item whole (paged).
-- memory_find(query): full-text search over every item, verbatim.
-- memory_pin(ref, reason) / memory_unpin(id): keep something at full resolution.
-- <pinned> items are alarms and standing orders: obey them until resolved.
-- Summaries keep little of tool output: say in your reply what you learned that matters later.`;
+// The contract (SPEC §7) is rendered by core at the head of the view block, so the model is
+// told about <memory> only on a call where <memory> is there. No system-prompt copy.
 
 const SUMMARY_SYSTEM = "You compress conversation records into one line. Output only that line.";
 
@@ -104,6 +94,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	const high = num(env.CYTH_HIGH);
 	const tail = num(env.CYTH_TAIL) ?? 160 * 1024;
 	const batch = num(env.CYTH_SUMMARY_BATCH) ?? 4;
+	const rounds = 8; // batches per drain: one batch per turn falls behind the clips a turn adds
 	const home = env.CYTH_HOME || undefined;
 
 	const status = (ctx: Ctx, text: string | undefined) => {
@@ -254,13 +245,6 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		}
 	});
 
-	// ---- contract in the system prompt ---------------------------------------------------------
-
-	pi.on("before_agent_start", (event: { systemPrompt: string }) => {
-		if (!deps.core) return undefined;
-		return { systemPrompt: `${event.systemPrompt}\n\n${CONTRACT}` };
-	});
-
 	// ---- after each agent run: ingest, status, background summaries ------------------------------
 
 	pi.on("agent_end", (_e, ctx) => {
@@ -277,7 +261,11 @@ export function createExtension(pi: Pi, deps: Deps): void {
 
 	pi.on("session_start", (_e, ctx) => {
 		if (!deps.core) { failOpen(ctx, "load", deps.coreError ?? "core missing"); return; }
-		try { showStatus(ctx, getStore(ctx.cwd)); } catch (err) { failOpen(ctx, "open", err); }
+		try {
+			const s = getStore(ctx.cwd);
+			showStatus(ctx, s);
+			void summarize(ctx, s); // the backlog other sessions left
+		} catch (err) { failOpen(ctx, "open", err); }
 	});
 
 	pi.on("session_shutdown", () => {
@@ -330,10 +318,12 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		if (summarizing || !ctx.modelRegistry?.complete) return;
 		summarizing = true;
 		try {
-			const jobs = s.pending(batch + failedRefs.size).filter((j) => !failedRefs.has(j.ref)).slice(0, batch);
-			if (!jobs.length) return;
 			const models = pickModels(ctx);
 			if (!models.length) return;
+			for (let round = 0; round < rounds; round++) {
+			const jobs = s.pending(batch + failedRefs.size).filter((j) => !failedRefs.has(j.ref)).slice(0, batch);
+			if (!jobs.length) break;
+			let landed = 0;
 			for (const job of jobs) {
 				let text = await ask(ctx, models, job.prompt);
 				if (text && Buffer.byteLength(text) > NODE) {
@@ -346,9 +336,12 @@ export function createExtension(pi: Pi, deps: Deps): void {
 					try { ok = s === store && s.put(job.ref, text); } catch { ok = false; }
 				}
 				if (!ok) failedRefs.add(job.ref);
+				else landed++;
 				if (s !== store) return; // session ended or cwd changed mid-batch
 			}
 			showStatus(ctx, s);
+			if (!landed) break;
+			}
 		} catch {
 			/* background: never surfaces */
 		} finally {
