@@ -719,5 +719,61 @@
     "find": "db.exec('COMMIT')\n      return r",
     "replace": "return r",
     "guard": "tx: commit"
+  },
+  {
+    "id": "I104",
+    "file": "core/src/index.ts",
+    "find": "rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))",
+    "replace": "rows.sort((a, b) => Number(a.rowid) - Number(b.rowid))",
+    "guard": "search FTS output is re-sorted newest first"
+  },
+  {
+    "id": "L1",
+    "file": "core/src/leaves.ts",
+    "find": "  if (code !== undefined && code !== 0) return false\n  return true",
+    "replace": "  if (code !== undefined && code !== 0) return false\n  const first = nonEmptyLines(output)[0]\n  return !(first !== undefined && ERRLINE.test(first))",
+    "guard": "toolOk: output text alone never marks a tool ERR"
+  },
+  {
+    "id": "L2",
+    "file": "core/src/leaves.ts",
+    "find": "alnum.slice(-4).join('')",
+    "replace": "session.slice(0, 4)",
+    "guard": "tag uses the last 4 alphanumerics, not the first 4"
+  },
+  {
+    "id": "P1",
+    "file": "core/src/pins.ts",
+    "find": "s !== '' && !s.endsWith('?') && DIRECTIVE.test(s)",
+    "replace": "s !== '' && DIRECTIVE.test(s)",
+    "guard": "isDirective: a question sentence is not a directive"
+  },
+  {
+    "id": "I105",
+    "file": "core/src/index.ts",
+    "find": "ingestItems(dropCompactionCopies(chunk.items))",
+    "replace": "ingestItems(chunk.items)",
+    "guard": "syncClaude drops a compaction re-written tail"
+  },
+  {
+    "id": "I106",
+    "file": "core/src/index.ts",
+    "find": "      if (seen.has(k)) return false\n",
+    "replace": "",
+    "guard": "copies within one chunk dropped"
+  },
+  {
+    "id": "I107",
+    "file": "core/src/index.ts",
+    "find": "const stored = db.prepare('SELECT 1 FROM items WHERE harness = ? AND session = ? AND ts = ? AND kind = ? AND text = ? LIMIT 1')",
+    "replace": "const stored = db.prepare('SELECT 1 FROM items WHERE harness = ? AND session = ? AND ? IS NOT NULL AND kind = ? AND text = ? LIMIT 1')",
+    "guard": "dedupe keyed on timestamp"
+  },
+  {
+    "id": "I108",
+    "file": "core/src/ingest.ts",
+    "find": " || d.isCompactSummary === true) continue",
+    "replace": ") continue",
+    "guard": "engine compaction summary is not a user item"
   }
 ]

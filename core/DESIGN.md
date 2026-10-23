@@ -54,6 +54,14 @@ the node just built (l, i) has i odd, build (l+1, i>>1) from (l, i-1) and (l, i)
 Pins: isDirective(row) → pin kind 'directive', reason 'directive'. toolKey(row): if !ok → pin
 kind 'failure', key = norm, reason 'failure'; if ok → mark resolved every open failure pin
 with the same key. Heuristics never resolve directive/manual pins.
+- toolOk(output, isError): a tool is ERR only when isError is true or exitCode(output) is a
+  nonzero number (a leading "Exit code N", or a trailing "Command exited with code N" line).
+  The output text alone never marks a tool ERR — a successful `grep` whose output prints
+  "... publish attempt failed" stays ok. tailLine still chooses which line the digest shows.
+- isDirective(item): a user item of at most 1000 chars is a directive only if, split into
+  sentences on `.` `!` `?` or newline, some sentence matches
+  /\b(never|always|don't|do not|must|stop|remember|from now on)\b/i and that sentence does
+  not end with "?" (after trimming). A question containing a keyword is not a directive.
 Returns {added, lastSeq: count-1} (-1 when empty).
 
 ## sync / backfill
@@ -94,7 +102,9 @@ Returns {added, lastSeq: count-1} (-1 when empty).
 
 ## search(q, {regex = false, limit = 20})
 - FTS: top `limit` by bm25 from items_fts MATCH q; if MATCH throws a syntax error, retry
-  with every whitespace token double-quoted (inner quotes doubled). Output newest first.
+  with every whitespace token double-quoted (inner quotes doubled). bm25 only selects which
+  items qualify; the hits are then re-sorted newest first (seq/rowid descending) before
+  output.
 - regex: new RegExp(q, 'i'), scan items newest first over the fts body, up to limit hits.
 - Each hit: `#n|<leaf (0,n) current text>` then `\n  ` + a one-line snippet (~120 bytes around
   the match; fts5 snippet() is fine for FTS). Output capped at PAGE bytes (stop adding hits).
@@ -128,6 +138,9 @@ mh that does not match its children / item; a persisted view whose coverage(part
 viewEnd) is non-empty or whose viewEnd > count. ok = problems.length === 0.
 
 ## misc
+- tag(harness, session): 'c'/'p' + the LAST 4 alphanumeric characters of the session id
+  (not the first 4), so same-day UUIDv7 Pi sessions get distinct tags; for a Claude
+  subagent key like 'abc/agent-x9f2' it is the last 4 alphanumerics of the whole key.
 - openStore(cwd, {home}): root = projectRoot(cwd), dbPath = storePath(root, home); mkdir -p.
   Schema created idempotently (CREATE ... IF NOT EXISTS). close() closes the db.
 - Tool items with no call seen (lookup miss): name from parser ('unknown' etc.), still stored.

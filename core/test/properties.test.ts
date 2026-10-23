@@ -158,7 +158,7 @@ function withStore<T>(fn: (s: Store) => T): T {
     s = mod.openStore(cwd, { home }) as Store
     return fn(s)
   } finally {
-    try { s?.close() } catch {}
+    try { s?.close() } catch { /* best-effort close during teardown */ }
     rmSync(home, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -506,7 +506,7 @@ test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a
       const command = r.pick(CMDS)
       const fail = r.chance(0.5)
       const output = fail ? (r.chance(0.5) ? 'error: boom ' + k : 'boom') : 'all good ' + k
-      const isError = fail && (output === 'boom' || r.chance(0.5))
+      const isError = fail
       open.set(command, fail ? (open.get(command) ?? 0) + 1 : 0)
       return { harness: 'claude', session: 'p7bb', uuid: 'b' + k, kind: 'tool', ts: new Date(Date.UTC(2026, 0, 1) + k * 1000).toISOString(), text: output, tool: { name: 'Bash', input: { command }, output, isError } }
     })
@@ -517,7 +517,7 @@ test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a
         s.ingest(c)
         for (const it of c) {
           const cmd = (it.tool!.input as any).command as string
-          const failed = it.tool!.isError || /error/i.test(it.tool!.output.split('\n')[0])
+          const failed = it.tool!.isError
           model.set(cmd, failed ? (model.get(cmd) ?? 0) + 1 : 0)
         }
         at += c.length

@@ -9,7 +9,11 @@ export type PinRow = { id: number; seq: number; reason: string; kind: PinKind; k
 const DIRECTIVE = /\b(never|always|don't|do not|must|stop|remember|from now on)\b/i
 
 export function isDirective(item: ItemRow): boolean {
-  return item.kind === 'user' && [...item.text].length <= 1000 && DIRECTIVE.test(item.text)
+  if (item.kind !== 'user' || [...item.text].length > 1000) return false
+  return item.text
+    .split(/(?<=[.!?\n])/)
+    .map((s) => s.trim())
+    .some((s) => s !== '' && !s.endsWith('?') && DIRECTIVE.test(s))
 }
 
 // The normalized key and status of a tool item, for failure pins.

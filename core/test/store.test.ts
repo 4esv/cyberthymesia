@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { NormItem, Store } from '../src/types.ts'
 import { NODE, PAGE, bytes } from '../src/util.ts'
-import { mergeClip } from '../src/leaves.ts'
+import { mergeClip, tag } from '../src/leaves.ts'
 
 const { openStore } = await import('../src/index.ts')
 
@@ -71,14 +71,20 @@ test('cascade: det only for tool pairs, clip otherwise, parity, tags on session 
   assert.equal(nodeRow(d, 2, 0).source, 'clip')
   assert.match(nodeRow(d, 1, 0).text, /^t\* /)
   // tags: first leaf and session changes only
-  assert.match(nodeRow(d, 0, 0).text, /^t:@cabcd /)
+  assert.match(nodeRow(d, 0, 0).text, /^t:@cbcd1 /)
   assert.doesNotMatch(nodeRow(d, 0, 1).text, /@/)
   assert.doesNotMatch(nodeRow(d, 0, 3).text, /@c/)
-  assert.match(nodeRow(d, 0, 4).text, /^u:@cwxyz /)
+  assert.match(nodeRow(d, 0, 4).text, /^u:@cxyz2 /)
   assert.doesNotMatch(nodeRow(d, 0, 5).text, /@c/)
   assert.deepEqual(s.verify(), { ok: true, problems: [] })
   // right child of the first merge is leaf 1, not leaf 0 (merge hash covers both)
   assert.notEqual(nodeRow(d, 1, 0).mh, '')
+})
+
+test('tag: last 4 alphanumerics distinguish same-day Pi UUIDv7 sessions', () => {
+  assert.equal(tag('pi', '01a16918-13cc-7172-8c21-10cf97f11be2'), 'p1be2')
+  assert.equal(tag('pi', '01a16918-4394-724a-ba71-31bca5a79773'), 'p9773')
+  assert.equal(tag('claude', 'abc/agent-x9f2'), 'cx9f2')
 })
 
 test('pins: directive, failure, auto-resolve by key, no false pins', () => {
@@ -95,11 +101,44 @@ test('pins: directive, failure, auto-resolve by key, no false pins', () => {
   assert.doesNotMatch(s.pins(), /failure/)
 })
 
+test('isDirective: only a non-question sentence with a keyword pins', () => {
+  const { s } = mk()
+  const directives = [
+    "I never want to submit a report I can't repro. Run what's needed.",
+    'From now on, use tabs',
+    "don't push",
+  ]
+  const notDirectives = [
+    "Why don't we make pi name things properly? does pi care? What's taking so long? I want to assume github.",
+    'Should we always rebase?',
+  ]
+  s.ingest(directives.map((text, k) => user(text, 'sess1', 'd' + k)))
+  assert.equal(s.status().pins, directives.length)
+  s.ingest(notDirectives.map((text, k) => user(text, 'sess1', 'n' + k)))
+  assert.equal(s.status().pins, directives.length)
+})
+
 test('failure pin from a successful tool is never created', () => {
   const { s } = mk()
   s.ingest([tool('Bash', { command: 'ls' }, 'fine', false)])
   assert.equal(s.status().pins, 0)
   assert.equal(s.pins(), 'no open pins')
+})
+
+test('failure status: only isError or a nonzero exit code marks a tool ERR', () => {
+  const { s } = mk()
+  // a "failed" in the first output line is not an error on its own
+  s.ingest([tool('Bash', { command: 'grep failed' }, 'level=WARN msg="publish attempt failed"\nok', false, 'sess1', 'g0')])
+  assert.match(s.view('claude', 'sess1', { tailStart: 1 }).block, /→ ok/)
+  assert.equal(s.status().pins, 0)
+  assert.equal(s.pins(), 'no open pins')
+  // a nonzero exit code is an error even without isError
+  s.ingest([tool('Bash', { command: 'x' }, 'Exit code 1\nboom', false, 'sess1', 'g1')])
+  assert.match(s.view('claude', 'sess1', { tailStart: 2 }).block, /→ ERR/)
+  assert.equal(s.status().pins, 1)
+  // isError is an error
+  s.ingest([tool('Bash', { command: 'y' }, 'clean output', true, 'sess1', 'g2')])
+  assert.equal(s.status().pins, 2)
 })
 
 // ---------- fixtures ----------
@@ -132,6 +171,34 @@ test('syncClaude: cursor advances, shrink resets, calls pair across syncs and ar
   // file replaced by a shorter one: cursor resets, new content is read
   writeFileSync(f, cUser('u9', 'cs1', cwd, 'new'))
   assert.equal(s.syncClaude(f).added, 1)
+})
+
+test('syncClaude: a compaction re-written tail is not ingested twice; the engine summary is skipped', () => {
+  const { s, cwd, home } = mk()
+  const f = join(home, 'c.jsonl')
+  const t1 = ts(), t2 = ts(), t3 = ts()
+  writeFileSync(f, cUser('u1', 'cs1', cwd, 'note: codeword X', t1) + cAsst('a1', 'cs1', cwd, [{ type: 'text', text: 'noted' }], t2))
+  assert.equal(s.syncClaude(f).added, 2)
+  // compaction: boundary, the engine summary, then the kept tail again under new uuids
+  appendFileSync(f, claudeLine({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', sessionId: 'cs1', timestamp: t3 }) +
+    claudeLine({ type: 'user', uuid: 'sum1', sessionId: 'cs1', timestamp: t3, cwd, isCompactSummary: true, message: { role: 'user', content: 'This session is being continued. Summary: ...' } }) +
+    cUser('u1b', 'cs1', cwd, 'note: codeword X', t1) + cAsst('a1b', 'cs1', cwd, [{ type: 'text', text: 'noted' }], t2) +
+    cUser('u2', 'cs1', cwd, 'a new question', ts()))
+  assert.equal(s.syncClaude(f).added, 1)
+  assert.equal(s.status().items, 3)
+  assert.equal(s.search('Summary').startsWith('no hits'), true)
+  // the same text at another time, or in another session, is a new message
+  appendFileSync(f, cUser('u3', 'cs1', cwd, 'note: codeword X', ts()) + cUser('u4', 'cs2', cwd, 'note: codeword X', t1))
+  assert.equal(s.syncClaude(f).added, 2)
+})
+
+test('syncClaude: a compacted transcript read in one pass keeps each message once', () => {
+  const { s, cwd, home } = mk()
+  const f = join(home, 'c.jsonl')
+  const t1 = ts(), t2 = ts()
+  writeFileSync(f, cUser('u1', 'cs1', cwd, 'note: codeword X', t1) + cAsst('a1', 'cs1', cwd, [{ type: 'text', text: 'noted' }], t2) +
+    cUser('u1b', 'cs1', cwd, 'note: codeword X', t1) + cAsst('a1b', 'cs1', cwd, [{ type: 'text', text: 'noted' }], t2))
+  assert.equal(s.syncClaude(f).added, 2)
 })
 
 function piHead(id: string, cwd: string) { return JSON.stringify({ type: 'session', id, cwd }) + '\n' }
@@ -321,6 +388,18 @@ test('search: regex snippet window clamps at 0; output capped at PAGE', () => {
   assert.ok(bytes(rx) <= PAGE)
 })
 
+test('search: FTS output is newest first even when bm25 favours an old item', () => {
+  const { s } = mk()
+  const items: NormItem[] = []
+  items.push(user('fox '.repeat(30), 'sess1', 'o0'))
+  for (let k = 1; k < 6; k++) items.push(user('a single fox mention ' + k, 'sess1', 'o' + k))
+  s.ingest(items)
+  const refs = s.search('fox').split('\n').filter((l) => l.startsWith('#')).map((l) => Number(/^#(\d+)\|/.exec(l)![1]))
+  assert.equal(refs.length, 6)
+  assert.equal(refs[0], 5, 'newest item first')
+  for (let k = 1; k < refs.length; k++) assert.ok(refs[k - 1] > refs[k], `refs strictly descending: ${refs.join(',')}`)
+})
+
 test('pin / unpin validation and listings', () => {
   const { s } = mk()
   s.ingest([user('one', 'sess1', 'p0'), user('two', 'sess1', 'p1')])
@@ -377,12 +456,12 @@ test('put: rejects det/verbatim/empty/oversize/missing/malformed, accepts bounda
   assert.equal(s.put('#0@5', 'x'), false) // offset
   // leaf: keeps tag/prefix
   assert.equal(s.put('#0', 'summary zero'), true)
-  assert.match(nodeRow(db(), 0, 0).text, /^u:@cabcd summary zero$/)
+  assert.match(nodeRow(db(), 0, 0).text, /^u:@cbcd9 summary zero$/)
   assert.equal(nodeRow(db(), 0, 0).source, 'model')
   assert.equal(s.put('#1', 'summary one'), true)
   assert.equal(nodeRow(db(), 0, 1).text, 'u:summary one')
   assert.equal(s.put('#4', 'summary four'), true)
-  assert.match(nodeRow(db(), 0, 4).text, /^u:@cwxyz summary four$/) // tag on session change
+  assert.match(nodeRow(db(), 0, 4).text, /^u:@cxyz8 summary four$/) // tag on session change
   assert.equal(s.put('#5', 'summary five'), true)
   assert.equal(nodeRow(db(), 0, 5).text, 'u:summary five')
   // merge node: whole text, no prefix
@@ -403,7 +482,7 @@ test('put: rejects det/verbatim/empty/oversize/missing/malformed, accepts bounda
   s.forget('#0')
   assert.equal(nodeRow(db(), 0, 0).source, 'clip')
   assert.equal(nodeRow(db(), 0, 0).tries, 0)
-  assert.match(nodeRow(db(), 0, 0).text, /^u:@cabcd alpha/)
+  assert.match(nodeRow(db(), 0, 0).text, /^u:@cbcd9 alpha/)
   s.forget('#3') // verbatim: untouched
   assert.equal(nodeRow(db(), 0, 3).source, 'verbatim')
   s.forget('#2') // det: untouched

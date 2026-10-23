@@ -118,7 +118,8 @@ export function parseClaude(file: string, start: number, lookup: Lookup): Chunk 
       bad++
       continue
     }
-    if ((d.type !== 'user' && d.type !== 'assistant') || d.isMeta === true) continue
+    // isCompactSummary: the engine's own compaction summary, not anyone's words.
+    if ((d.type !== 'user' && d.type !== 'assistant') || d.isMeta === true || d.isCompactSummary === true) continue
     const msg = d.message
     if (!msg || typeof d.uuid !== 'string' || typeof d.sessionId !== 'string') continue
     const session: string = d.sessionId

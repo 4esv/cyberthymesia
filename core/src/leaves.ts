@@ -129,8 +129,7 @@ export function toolOk(output: string, isError: boolean): boolean {
   if (isError) return false
   const code = exitCode(output)
   if (code !== undefined && code !== 0) return false
-  const first = nonEmptyLines(output)[0]
-  return !(first !== undefined && ERRLINE.test(first))
+  return true
 }
 
 function tailLine(output: string, ok: boolean): string {
@@ -144,7 +143,8 @@ function tailLine(output: string, ok: boolean): string {
 }
 
 export function tag(harness: Harness, session: string): string {
-  return (harness === 'claude' ? 'c' : 'p') + session.slice(0, 4)
+  const alnum = session.match(/[a-zA-Z0-9]/g) ?? []
+  return (harness === 'claude' ? 'c' : 'p') + alnum.slice(-4).join('')
 }
 
 export function prefix(kind: Kind, t: string | null): string {

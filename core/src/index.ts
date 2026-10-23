@@ -36,6 +36,7 @@ function schema(db: DatabaseSync): void {
       hash TEXT NOT NULL,
       UNIQUE (harness, session, uuid)
     );
+    CREATE INDEX IF NOT EXISTS items_by_time ON items (harness, session, ts);
     CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(body);
     CREATE TABLE IF NOT EXISTS raw (
       harness TEXT NOT NULL,
@@ -323,6 +324,22 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
     return { l: 0, i: r.item }
   }
 
+  // After a compaction, Claude Code writes the kept tail into the transcript again, as new
+  // records (new uuids) with the same timestamps and text. A user or assistant item whose
+  // session, kind, ts and text equal one already stored, or one earlier in the same chunk,
+  // is such a copy: drop it, so the log holds each message once (SPEC §9).
+  const dropCompactionCopies = (items: NormItem[]): NormItem[] => {
+    const seen = new Set<string>()
+    const stored = db.prepare('SELECT 1 FROM items WHERE harness = ? AND session = ? AND ts = ? AND kind = ? AND text = ? LIMIT 1')
+    return items.filter((it) => {
+      if (it.kind === 'tool') return true
+      const k = JSON.stringify([it.session, it.ts, it.kind, it.text])
+      if (seen.has(k)) return false
+      seen.add(k)
+      return stored.get(it.harness, it.session, it.ts, it.kind, it.text) === undefined
+    })
+  }
+
   const store: Store = {
     root,
     dbPath,
@@ -335,7 +352,7 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
       const off = cursorOffset(file)
       const chunk = parseClaude(file, off, lookup)
       return tx(() => {
-        const { added } = ingestItems(chunk.items)
+        const { added } = ingestItems(dropCompactionCopies(chunk.items))
         for (const r of chunk.raw) db.prepare('INSERT OR IGNORE INTO raw (harness, session, uuid, thinking) VALUES (?,?,?,?)').run(r.harness, r.session, r.uuid, r.thinking)
         for (const c of chunk.open) upsertCall(c)
         for (const c of chunk.closed) deleteCall(c)
@@ -487,6 +504,7 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
         ).all(query, limit)
         let rows: any[]
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
+        rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))
         for (const row of rows) {
           hits.push({ n: Number(row.rowid), leaf: nodeText(0, Number(row.rowid)), snippet: clipMark(oneLine(row.s), 120) })
         }
@@ -634,3 +652,4 @@ export function openStore(cwd: string, opts?: { home?: string }): Store {
 
   return store
 }
+
