@@ -144,7 +144,7 @@ after it are the recent present, verbatim.
 - The latest word on a thing is the truth. Before you act, guess or ask about
   anything past, find it in <memory> and zoom until you have it whole.
 - memory_zoom(ref): open #a-b into its halves; #n gives the item whole (paged).
-- memory_search(query): full-text search over every item, verbatim.
+- memory_find(query): full-text search over every item, verbatim.
 - memory_pin(ref, reason) / memory_unpin(id): keep something at full resolution.
 - <pinned> items are alarms and standing orders: obey them until resolved.
 - Summaries keep little of tool output: say in your reply what you learned that matters later.
@@ -197,7 +197,7 @@ Both: **fail open.** Any error in cyberthymesia → the harness's native
 behaviour, plus a status line saying so. `CYTH_DISABLE=1` → pass-through.
 Summaries: after each turn, take `pending(4)` and run them on the cheapest model
 available, in the background, never blocking a turn. Tools: `memory_zoom`,
-`memory_search`, `memory_pin`, `memory_unpin`, `memory_pins` (thin calls into
+`memory_find`, `memory_pin`, `memory_unpin`, `memory_pins` (thin calls into
 core). Contract (§7) goes into the system prompt.
 
 - **claude-code/** (a Claude Code mod; no Node in the module, so core is reached
