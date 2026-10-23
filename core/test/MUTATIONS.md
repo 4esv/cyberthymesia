@@ -135,8 +135,25 @@ Test command: `node --test core/test/cli.test.ts`
 | C17 | core/bin/cyth.ts | fold passes seq | killed |
 | C18 | core/bin/cyth.ts | value flag without a value is a usage error | killed |
 
-## claude-code/hooks: 17/17 killed
-Test command: `claude plugin test claude-code`
+## Audit fixes, 2026-10-23: core 8/8 killed
+Test command: `node --test core/test/properties.test.ts core/test/store.test.ts`. Run on the new
+guards only (the full index sweep above takes ~25 minutes). I104, L1, L2, P1 are also in
+`mutants.index.json`.
+
+| id | file | guard | result |
+|---|---|---|---|
+| I104 | core/src/index.ts | search FTS output is re-sorted newest first | killed |
+| L1 | core/src/leaves.ts | toolOk: output text alone never marks a tool ERR | killed |
+| L2 | core/src/leaves.ts | tag uses the last 4 alphanumerics, not the first 4 | killed |
+| P1 | core/src/pins.ts | isDirective: a question sentence is not a directive | killed |
+| I105 | core/src/index.ts | syncClaude drops a compaction re-written tail | killed |
+| I106 | core/src/index.ts | copies within one chunk dropped | killed (after adding the one-pass test) |
+| I107 | core/src/index.ts | dedupe keyed on timestamp | killed |
+| I108 | core/src/ingest.ts | engine compaction summary is not a user item | killed |
+
+## claude-code/hooks: 25/26 killed, 1 equivalent
+Test command: `claude plugin test claude-code`. M15 (compaction threshold) was removed with the
+self-triggered compaction; M13 now guards the view block instead of the contract section.
 
 | id | file | guard | result |
 |---|---|---|---|
@@ -152,8 +169,27 @@ Test command: `claude plugin test claude-code`
 | M10 | claude-code/hooks/register.ts | tail start must be in store before fold | killed |
 | M11 | claude-code/hooks/register.ts | empty view block rejected | killed |
 | M12 | claude-code/hooks/register.ts | no clean boundary rejected | killed |
-| M13 | claude-code/hooks/register.ts | contract not injected when disabled | killed |
+| M13 | claude-code/hooks/register.ts | view block not added when disabled | killed |
 | M14 | claude-code/hooks/register.ts | no after-turn work when disabled | killed |
-| M15 | claude-code/hooks/register.ts | compaction threshold strict | killed |
 | M16 | claude-code/hooks/tail.ts | pick respects clean cuts | killed |
 | M17 | claude-code/hooks/register.ts | ingest failure surfaces a status line | killed |
+| M18 | claude-code/hooks/register.ts | prompt.context adds the view block | killed |
+| M19 | claude-code/hooks/register.ts | prompt.context fails open with no block | killed |
+| M20 | claude-code/hooks/register.ts | empty view block refused | killed |
+| M21 | claude-code/hooks/register.ts | compaction re-asks prompt.context | killed |
+| M22 | claude-code/hooks/register.ts | compaction keeps only the tail | killed |
+| M23 | claude-code/hooks/register.ts | drain stops after a round that lands nothing | killed |
+| M24 | claude-code/hooks/register.ts | drain capped at 8 rounds | killed |
+| M25 | claude-code/hooks/register.ts | drain ends when nothing is pending | equivalent: an empty round lands nothing, so the no-progress stop ends the drain too |
+| M26 | claude-code/hooks/register.ts | session.start drains the backlog | killed |
+| M27 | claude-code/hooks/register.ts | a refused put counts as no progress | killed |
+
+## pi/src: 3/4 killed, 1 equivalent (pi/test/mutants.json)
+Test command: `node --test pi/test/extension.test.ts pi/test/plan.test.ts`
+
+| id | file | guard | result |
+|---|---|---|---|
+| P1 | pi/src/extension.ts | drain stops after a round that lands nothing | killed |
+| P2 | pi/src/extension.ts | drain capped at 8 rounds | killed |
+| P3 | pi/src/extension.ts | session_start drains the backlog | killed |
+| P4 | pi/src/extension.ts | drain ends when nothing is pending | equivalent: an empty round lands nothing, so the no-progress stop ends the drain too |
