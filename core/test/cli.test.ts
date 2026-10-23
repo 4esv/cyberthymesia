@@ -59,7 +59,7 @@ function json(...args: string[]): any {
 }
 
 function dbFile(): string {
-  const dirs = readdirSync(home)
+  const dirs = readdirSync(home).filter((d) => d !== 'sessions.tsv') // sessions.tsv: the session-to-store registry
   assert.equal(dirs.length, 1, `expected one store dir in ${home}, got ${dirs.join(', ')}`)
   return join(home, dirs[0], 'store.db')
 }

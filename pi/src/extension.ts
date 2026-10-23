@@ -38,7 +38,7 @@ export type Store = {
 	status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string };
 	close(): void;
 };
-export type Core = { openStore(cwd: string, opts?: { home?: string }): Store };
+export type Core = { openStore(cwd: string, opts?: { home?: string; session?: { harness: "pi"; session: string } }): Store };
 
 // ---- Pi host, structurally ---------------------------------------------------------------------
 
@@ -114,14 +114,20 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	const failedRefs = new Set<string>();
 	const seqCache = new Map<string, number>(); // `${session}\0${uuid}` -> seq; seqs never change
 
-	const getStore = (cwd: string): Store => {
+	// A session stays in the store it first used (core records it), wherever ctx.cwd moves.
+	const getStore = (cwd: string, sessionId?: string): Store => {
 		if (!deps.core) throw new Error(`core unavailable: ${String((deps.coreError as Error)?.message ?? deps.coreError)}`);
-		if (store && storeCwd === cwd) return store;
+		const key = `${cwd}\0${sessionId ?? ""}`;
+		if (store && storeCwd === key) return store;
 		try { store?.close(); } catch { /* ignore */ }
-		store = deps.core.openStore(cwd, home ? { home } : undefined);
-		storeCwd = cwd;
+		store = deps.core.openStore(cwd, { ...(home ? { home } : {}), ...(sessionId ? { session: { harness: "pi" as const, session: sessionId } } : {}) });
+		storeCwd = key;
 		seqCache.clear();
 		return store;
+	};
+
+	const sidOf = (ctx: Ctx): string | undefined => {
+		try { return ctx.sessionManager?.getSessionId?.() || undefined; } catch { return undefined; }
 	};
 
 	const failOpen = (ctx: Ctx, where: string, err: unknown) => {
@@ -181,7 +187,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		try {
 			const session = ctx.sessionManager.getSessionId();
 			if (!ctx.sessionManager.getSessionFile()) return; // --no-session: nothing to ingest, stay native
-			const s = getStore(ctx.cwd);
+			const s = getStore(ctx.cwd, sidOf(ctx));
 			// view before sync: a new session's tailStart is fixed before its own messages land,
 			// so all of them stay raw (also true for a pi-subagents fork child: new id, copied entries).
 			let v = s.view(HARNESS, session, viewOpts());
@@ -213,7 +219,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		try {
 			const session = ctx.sessionManager.getSessionId();
 			if (!ctx.sessionManager.getSessionFile()) return undefined;
-			const s = getStore(ctx.cwd);
+			const s = getStore(ctx.cwd, sidOf(ctx));
 			let v = s.view(HARNESS, session, viewOpts());
 			sync(s, ctx);
 			const entries = event.branchEntries.filter((e) => e.type === "message" && e.message);
@@ -250,7 +256,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	pi.on("agent_end", (_e, ctx) => {
 		try {
 			if (!ctx.sessionManager.getSessionFile()) return;
-			const s = getStore(ctx.cwd);
+			const s = getStore(ctx.cwd, sidOf(ctx));
 			sync(s, ctx);
 			showStatus(ctx, s);
 			void summarize(ctx, s);
@@ -262,7 +268,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	pi.on("session_start", (_e, ctx) => {
 		if (!deps.core) { failOpen(ctx, "load", deps.coreError ?? "core missing"); return; }
 		try {
-			const s = getStore(ctx.cwd);
+			const s = getStore(ctx.cwd, sidOf(ctx));
 			showStatus(ctx, s);
 			void summarize(ctx, s); // the backlog other sessions left
 		} catch (err) { failOpen(ctx, "open", err); }
@@ -357,7 +363,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		pi.registerTool!({
 			name, label: name, description, parameters, promptSnippet: description,
 			async execute(_id, params, _signal, _u, ctx) {
-				return text(run(getStore(ctx.cwd), params ?? {})); // throws -> Pi reports an error result
+				return text(run(getStore(ctx.cwd, sidOf(ctx)), params ?? {})); // throws -> Pi reports an error result
 			},
 		});
 	const str = (description: string) => ({ type: "string", description });

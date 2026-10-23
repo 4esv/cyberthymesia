@@ -237,3 +237,17 @@ Test command: `node --test core/test/*.test.ts` (D14: `node --test pi/test/*.tes
 | F12 | core/src/index.ts | rebuild does not re-run auto-pin heuristics | killed |
 | F13 | core/src/index.ts | forgetSession finds the session's cursor files | killed |
 | D14 | pi/src/extension.ts | pi -p (no UI) syncs as one-shot | killed |
+
+## session to store stickiness (core/src/sessions.ts, core/bin/cyth.ts, core/src/index.ts): 5/5 killed
+Test command: `node --test core/test/sessions.test.ts` (mutants in core/test/mutants.sessions.json). S03 first survived; the test now also views a `session/agent` key.
+
+| id | file | guard | result |
+|---|---|---|---|
+| S01 | core/src/sessions.ts | session keeps the store recorded at first contact, not the current cwd's | killed |
+| S02 | core/src/sessions.ts | first contact is recorded | killed |
+| S03 | core/src/sessions.ts | a subagent key belongs to its parent session's store | killed |
+| S04 | core/bin/cyth.ts | sync-claude infers the session from the transcript path | killed |
+| S05 | core/src/index.ts | openStore resolves through the session registry | killed |
+
+Guard mutation (home-guard.test.ts): a test file that called openStore without a home made the guard fail ("tests leaked stores into the default home"); removing it made it pass. The guard first passed vacuously because a nested `node --test` inherits NODE_TEST_CONTEXT and runs nothing; the guard now deletes that variable.
+Pi: replacing getStore(ctx.cwd, sidOf(ctx)) with getStore(ctx.cwd) made pi/test/extension.test.ts fail (1 test), restored.

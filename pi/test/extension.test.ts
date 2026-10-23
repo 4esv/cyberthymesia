@@ -247,3 +247,17 @@ test("summaries: session_start drains the backlog", async () => {
 	await new Promise((r) => setTimeout(r, 50));
 	assert.equal(puts(), 5);
 });
+
+test("openStore always gets the session id, so a cwd change mid-session keeps the store", () => {
+	const seen: { cwd: string; session?: string }[] = [];
+	const { pi, ctx, store, messages } = setup();
+	void store;
+	const core: Core = { openStore: (cwd, o) => { seen.push({ cwd, session: o?.session?.session }); return setup().store; } };
+	const pi2 = fakePi();
+	createExtension(pi2, { core, env: { CYTH_TAIL: "4000" } });
+	void pi; void messages;
+	pi2.emit("agent_end", {}, ctx);
+	pi2.emit("agent_end", {}, { ...ctx, cwd: "/elsewhere" });
+	assert.deepEqual(seen.map((s) => s.session), [SESSION, SESSION]);
+	assert.notEqual(seen[0].cwd, seen[1].cwd);
+});

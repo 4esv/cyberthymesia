@@ -3,6 +3,8 @@
 // view with full-text search, item zoom, an algedonic pin channel and a
 // replayable audit log. Built on node:sqlite (DatabaseSync) with zero deps.
 
+import { sessionRoot } from './sessions.ts'
+import type { SessionId } from './sessions.ts'
 import { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -118,8 +120,9 @@ function safeParse(s: string | null): any {
   try { return JSON.parse(s) } catch { return null }
 }
 
-export function openStore(cwd: string, opts?: { home?: string }): Store {
-  const root = projectRoot(cwd)
+export function openStore(cwd: string, opts?: { home?: string; session?: SessionId }): Store {
+  // A session stays in the store it first used, wherever its cwd has moved to.
+  const root = opts?.session ? sessionRoot(opts.session, cwd, opts.home) : projectRoot(cwd)
   const dbPath = storePath(root, opts?.home)
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)

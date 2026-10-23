@@ -1,0 +1,7 @@
+[
+  {"id":"S01","file":"core/src/sessions.ts","find":"const hit = recordedRoot(key, home)\n  if (hit !== undefined) return hit\n  const root = projectRoot(cwd)","replace":"const hit = recordedRoot(key, home)\n  const root = projectRoot(cwd)\n  if (hit !== undefined) return root","guard":"session keeps the store recorded at first contact, not the current cwd's"},
+  {"id":"S02","file":"core/src/sessions.ts","find":"fs.appendFileSync(file(home), `${key.harness}\\t${clean(key.session)}\\t${root}\\n`)","replace":"void root","guard":"first contact is recorded"},
+  {"id":"S03","file":"core/src/sessions.ts","find":"session: id.session.split('/')[0] }","replace":"session: id.session }","guard":"a subagent key belongs to its parent session's store"},
+  {"id":"S04","file":"core/bin/cyth.ts","find":"if (cmd === 'sync-claude' && rest[0]) {","replace":"if (false && cmd === 'sync-claude' && rest[0]) {","guard":"sync-claude infers the session from the transcript path"},
+  {"id":"S05","file":"core/src/index.ts","find":"opts?.session ? sessionRoot(opts.session, cwd, opts.home) : projectRoot(cwd)","replace":"projectRoot(cwd)","guard":"openStore resolves through the session registry"}
+]

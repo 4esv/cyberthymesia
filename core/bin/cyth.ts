@@ -15,7 +15,7 @@ class Usage extends Error {}
 
 type Out = { json: unknown; human: string; code?: number }
 
-const VALUE_FLAGS = new Set(['--cwd', '--home', '--limit', '--claude', '--pi'])
+const VALUE_FLAGS = new Set(['--cwd', '--home', '--limit', '--claude', '--pi', '--session'])
 const BOOL_FLAGS = new Set(['--json', '--regex', '--dry-run', '--one-shot'])
 const flags = new Map<string, string | true>()
 const pos: string[] = []
@@ -45,12 +45,37 @@ function harness(s: string): 'claude' | 'pi' {
 const text = (s: string): Out => ({ json: { text: s }, human: s })
 const done = (): Out => ({ json: { ok: true }, human: 'ok' })
 
+// The session a command belongs to, so it opens that session's first store:
+// --session harness:id, else the session view/fold/sync name themselves.
+function sessionOpt(rest: string[]): { session?: { harness: 'claude' | 'pi'; session: string } } {
+  const flag = str('--session')
+  const cmd = pos[0]
+  if (flag !== undefined) {
+    const k = flag.indexOf(':')
+    return { session: { harness: harness(flag.slice(0, k < 0 ? 0 : k)), session: flag.slice(k + 1) } }
+  }
+  if ((cmd === 'view' || cmd === 'fold') && rest.length >= 2 && (rest[0] === 'claude' || rest[0] === 'pi')) {
+    return { session: { harness: rest[0], session: rest[1] } }
+  }
+  if (cmd === 'sync-claude' && rest[0]) {
+    const parts = rest[0].split('/')
+    const base = parts[parts.length - 1].replace(/\.jsonl$/, '')
+    const sub = parts.length >= 3 && parts[parts.length - 2] === 'subagents' ? parts[parts.length - 3] : base
+    return { session: { harness: 'claude', session: sub } }
+  }
+  if (cmd === 'sync-pi' && rest[0]) {
+    const m = /_([0-9a-f-]{20,})\.jsonl$/.exec(rest[0])
+    if (m) return { session: { harness: 'pi', session: m[1] } }
+  }
+  return {}
+}
+
 function run(): Out {
   const [cmd, ...rest] = pos
   const open = (): Store => {
     if (store === undefined) {
       const home = str('--home')
-      store = openStore(str('--cwd') ?? process.cwd(), home === undefined ? undefined : { home })
+      store = openStore(str('--cwd') ?? process.cwd(), { ...(home === undefined ? {} : { home }), ...sessionOpt(rest) })
     }
     return store
   }

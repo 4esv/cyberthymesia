@@ -31,7 +31,7 @@ function world(on: On, opts: { env?: Record<string, string>; cli?: Cli } = {}) {
   return { runs, statuses }
 }
 
-const sub = (argv: readonly string[]) => argv[0] === 'node' && argv[1] === '--input-type=module' ? 'seq' : (argv[5] ?? '')
+const sub = (argv: readonly string[]) => argv[0] === 'node' && argv[1] === '--input-type=module' ? 'seq' : (argv[argv.indexOf('--json') + 1] ?? '')
 
 const u = (text: string, handle: string) => ({ role: 'user' as const, text, toolUses: [], handle })
 const a = (text: string, handle: string) => ({ role: 'assistant' as const, text, toolUses: [], handle })
@@ -58,7 +58,7 @@ test('turn.complete syncs the transcript through the CLI', async ($, on) => {
   expect(r).toEqual({ text: 'done' })
   await clock.advance(1000)
   const sync = w.runs.find(x => x.argv.includes('sync-claude'))
-  expect(sync?.argv).toEqual(['node', BIN, '--cwd', CWD, '--json', 'sync-claude', `/cfg/projects/-w/${SID}.jsonl`])
+  expect(sync?.argv).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'sync-claude', `/cfg/projects/-w/${SID}.jsonl`])
   // status line shown after ingest
   expect(w.statuses).toContain('cyth 3 items · 1 pending · 2 pins')
 })
@@ -115,10 +115,10 @@ test('session.compact folds, answers the kept tail and re-asks prompt.context fo
   const subs = w.runs.map(x => sub(x.argv))
   expect(subs).toEqual(['sync-claude', 'seq', 'fold', 'view', 'status'])
   const argvOf = (s: string) => w.runs.find(x => sub(x.argv) === s)!.argv
-  expect(argvOf('sync-claude')).toEqual(['node', BIN, '--cwd', CWD, '--json', 'sync-claude', `/cfg/projects/-w/${SID}.jsonl`])
+  expect(argvOf('sync-claude')).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'sync-claude', `/cfg/projects/-w/${SID}.jsonl`])
   // fold at the seq the tail starts on
-  expect(argvOf('fold')).toEqual(['node', BIN, '--cwd', CWD, '--json', 'fold', 'claude', SID, '7'])
-  expect(argvOf('view')).toEqual(['node', BIN, '--cwd', CWD, '--json', 'view', 'claude', SID])
+  expect(argvOf('fold')).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'fold', 'claude', SID, '7'])
+  expect(argvOf('view')).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'view', 'claude', SID])
   // the seq lookup is given the tail's first message handles, not earlier ones
   const raw = argvOf('seq').at(-1)!
   const cands = JSON.parse(raw) as string[]
@@ -250,7 +250,7 @@ test('status line flags an algedonic alarm', async ($, on) => {
   expect(w.statuses.at(-1)).toBe('cyth 1 items · 0 pending · 1 pins · ALGEDONIC: review with memory_pins')
 })
 
-const toolCli: Cli = argv => ({ exitCode: 0, stdout: JSON.stringify({ text: `ran ${argv.slice(5).join(' ')}` }) })
+const toolCli: Cli = argv => ({ exitCode: 0, stdout: JSON.stringify({ text: `ran ${argv.slice(7).join(' ')}` }) })
 
 test('memory_find runs search <q> and returns the CLI text', async ($, on) => {
   const w = world(on, { cli: toolCli })
@@ -258,16 +258,16 @@ test('memory_find runs search <q> and returns the CLI text', async ($, on) => {
   const r = await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'needle' } as never)
   expect(r).toMatchObject({ result: 'ran search needle' })
   expect(w.runs).toHaveLength(1)
-  expect(w.runs[0]!.argv).toEqual(['node', BIN, '--cwd', CWD, '--json', 'search', 'needle'])
+  expect(w.runs[0]!.argv).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'search', 'needle'])
 })
 
 test('memory_find with regex true adds --regex; false does not', async ($, on) => {
   const w = world(on, { cli: toolCli })
   on('tool.call', () => ({ result: 'native' }))
   await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'a.*b', regex: true } as never)
-  expect(w.runs[0]!.argv.slice(5)).toEqual(['search', 'a.*b', '--regex'])
+  expect(w.runs[0]!.argv.slice(7)).toEqual(['search', 'a.*b', '--regex'])
   await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'a.*b', regex: false } as never)
-  expect(w.runs[1]!.argv.slice(5)).toEqual(['search', 'a.*b'])
+  expect(w.runs[1]!.argv.slice(7)).toEqual(['search', 'a.*b'])
 })
 
 test('the other memory tools map to their CLI commands', async ($, on) => {
@@ -283,7 +283,7 @@ test('the other memory tools map to their CLI commands', async ($, on) => {
     const r = await $.tool.call({ tool: `mcp__cyberthymesia__memory_${t}`, ...input } as never)
     expect(r).toMatchObject({ result: `ran ${argv.join(' ')}` })
   }
-  expect(w.runs.map(x => x.argv.slice(5))).toEqual(cases.map(c => c[2]))
+  expect(w.runs.map(x => x.argv.slice(7))).toEqual(cases.map(c => c[2]))
 })
 
 test('a failing CLI denies the tool call with the reason', async ($, on) => {
@@ -315,7 +315,7 @@ test('prompt.context adds the view block after the engine blocks, from the first
   on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: 'md' }] }) as never)
   const r = await $.prompt.context({ blocks: [] } as never)
   expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'md' }, { name: 'cyberthymesia', text: '<memory>VIEWBLOCK</memory>' }])
-  expect(w.runs.map(x => x.argv)).toEqual([['node', BIN, '--cwd', CWD, '--json', 'view', 'claude', SID]])
+  expect(w.runs.map(x => x.argv)).toEqual([['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'view', 'claude', SID]])
 })
 
 test('prompt.context fails open: no view, no block, a status line', async ($, on) => {
@@ -346,7 +346,7 @@ function backlogCli(left: number, putOk = true): { cli: Cli; puts: () => number 
   const cli: Cli = argv => {
     const s = sub(argv)
     if (s === 'pending') {
-      const n = Math.min(Number(argv[7] ?? 4), left)
+      const n = Math.min(Number(argv[9] ?? 4), left)
       return { exitCode: 0, stdout: JSON.stringify(Array.from({ length: n }, (_, k) => ({ ref: `#${k}`, prompt: `p${k}` }))) }
     }
     if (s === 'put') {

@@ -54,7 +54,9 @@ async function cliPaths($: EngineInterface): Promise<{ node: string; bin: string
 /** Runs `node cyth.ts <args> --cwd <cwd> --json`; throws on a nonzero exit. */
 async function cyth($: EngineInterface, cwd: string, args: readonly string[], timeoutMs = 30_000): Promise<string> {
   const { node, bin } = await cliPaths($)
-  const r = await $.process.run([node, bin, '--cwd', cwd, '--json', ...args], { cwd, timeoutMs })
+  // The session stays in the store it first used, whatever cwd has become.
+  const session = await $.session.id()
+  const r = await $.process.run([node, bin, '--cwd', cwd, '--session', `claude:${session}`, '--json', ...args], { cwd, timeoutMs })
   if (r.exitCode !== 0) {
     throw new Error(`cyth ${args[0] ?? ''} exited ${r.exitCode}: ${r.stderr.trim().split('\n')[0] ?? ''}`)
   }
@@ -85,7 +87,7 @@ function seqScript(coreUrl: string): string {
   return [
     `import { openStore } from ${JSON.stringify(coreUrl)};`,
     'const [cwd, session, raw] = process.argv.slice(1);',
-    'const store = openStore(cwd);',
+    'const store = openStore(cwd, { session: { harness: "claude", session: session.split("/")[0] } });',
     'let best;',
     'try { for (const u of JSON.parse(raw)) { const s = store.seqOf("claude", session, u);',
     '  if (typeof s === "number" && (best === undefined || s < best)) best = s; } }',
