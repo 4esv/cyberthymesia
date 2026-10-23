@@ -1,0 +1,6 @@
+.orchestrator/
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+claude-code/.claude-plugin/types/
