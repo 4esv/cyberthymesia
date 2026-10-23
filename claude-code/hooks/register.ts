@@ -13,23 +13,14 @@ import type {
 import { chooseTail } from './tail'
 
 const PLUGIN = 'cyberthymesia'
-const DEFAULT_COMPACT_AT = 100_000 // tokens
 const DEFAULT_TAIL = 160 * 1024 // bytes (SPEC §3)
 const NODE_BYTES = 512 // SPEC §2
 const SUMMARY_BATCH = 4
+const SUMMARY_ROUNDS = 8 // batches per drain: at most 32 summaries per turn
+const CONTEXT_BLOCK = 'cyberthymesia'
 
-export const CONTRACT = `## Memory: cyberthymesia
-This conversation never ends; nothing is ever lost. <memory> lists the project's
-whole history as a binary tree of one-line summaries, oldest first: \`#a-b|...\`
-covers items a..b, \`#n|...\` is one item. Detail fades with age. The raw messages
-after it are the recent present, verbatim.
-- The latest word on a thing is the truth. Before you act, guess or ask about
-  anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): open #a-b into its halves; #n gives the item whole (paged).
-- memory_find(query): full-text search over every item, verbatim.
-- memory_pin(ref, reason) / memory_unpin(id): keep something at full resolution.
-- <pinned> items are alarms and standing orders: obey them until resolved.
-- Summaries keep little of tool output: say in your reply what you learned that matters later.`
+// The contract (SPEC §7) is not kept here: core renders it at the head of the
+// view block, so the model is told about <memory> only when <memory> is there.
 
 // Module state: lost on a hot reload, which only costs a re-derivation.
 const transcripts = new Map<string, string>() // session key -> transcript path
@@ -166,9 +157,10 @@ function failNote($: EngineInterface, where: string, err: unknown): void {
 // ---------- compaction ----------
 
 /**
- * Our answer to session.compact: one user message carrying the view block,
- * then the raw tail kept by handle. Folds core's tailStart to the tail's
- * first item first, so the view covers exactly what the tail does not.
+ * Our answer to session.compact: the raw tail kept by handle. Folds core's
+ * tailStart to the tail's first item first, so the view covers exactly what
+ * the tail does not. The view itself reaches the model as the prompt.context
+ * block, which the engine sends again after a compaction (SPEC §9).
  */
 async function compactAnswer($: EngineInterface, e: SessionCompactInput): Promise<SessionCompactResult> {
   const id = await $.session.id()
@@ -185,19 +177,24 @@ async function compactAnswer($: EngineInterface, e: SessionCompactInput): Promis
   if (seq === undefined) throw new Error(`tail start not in the store (${e.messages[cut.index]?.handle ?? '?'})`)
 
   await cyth($, cwd, ['fold', 'claude', session, String(seq)])
-  const view = await cythJson($, cwd, ['view', 'claude', session])
-  const block = textOf(view)
-  if (block.trim() === '') throw new Error('empty view block')
+  // Checked before answering: a compaction without a view would drop history.
+  await viewBlock($, cwd, session)
+  $.ui.invalidate('prompt.context')
+  return { messages: e.messages.slice(cut.index) }
+}
 
-  const viewMessage: SessionMessage = { role: 'user', text: block, toolUses: [] }
-  return { messages: [viewMessage, ...e.messages.slice(cut.index)] }
+/** The rendered view (contract, <memory>, <pinned>) for one session key. */
+async function viewBlock($: EngineInterface, cwd: string, session: string): Promise<string> {
+  const block = textOf(await cythJson($, cwd, ['view', 'claude', session]))
+  if (block.trim() === '') throw new Error('empty view block')
+  return block
 }
 
 // ---------- after a turn: ingest, trigger, summaries ----------
 
-async function summarizeOne($: EngineInterface, cwd: string, model: string, ref: string, prompt: string): Promise<void> {
+async function summarizeOne($: EngineInterface, cwd: string, model: string, ref: string, prompt: string): Promise<boolean> {
   const first = await $.model.complete({ model, prompt, maxTokens: 400, timeoutMs: 60_000 })
-  if (!first.isAnswered) return
+  if (!first.isAnswered) return false
   let text = first.text.trim().replace(/\s*\n\s*/g, ' ')
   const n = new TextEncoder().encode(text).length
   if (n > NODE_BYTES) {
@@ -207,11 +204,12 @@ async function summarizeOne($: EngineInterface, cwd: string, model: string, ref:
       maxTokens: 400,
       timeoutMs: 60_000,
     })
-    if (!retry.isAnswered) return
+    if (!retry.isAnswered) return false
     text = retry.text.trim().replace(/\s*\n\s*/g, ' ')
-    if (new TextEncoder().encode(text).length > NODE_BYTES) return // core keeps clip
+    if (new TextEncoder().encode(text).length > NODE_BYTES) return false // core keeps clip
   }
-  await cyth($, cwd, ['put', ref, text])
+  const put = (await cythJson($, cwd, ['put', ref, text])) as { ok?: unknown }
+  return put.ok === true
 }
 
 async function summarize($: EngineInterface, cwd: string): Promise<void> {
@@ -219,14 +217,17 @@ async function summarize($: EngineInterface, cwd: string): Promise<void> {
   summarizing = true
   try {
     const model = (await $.env.get('CYTH_SUMMARY_MODEL')) || 'haiku'
-    const raw = await cythJson($, cwd, ['pending', '--limit', String(SUMMARY_BATCH)])
-    const jobs = (Array.isArray(raw) ? raw : []) as { ref?: unknown; prompt?: unknown }[]
-    // At most SUMMARY_BATCH in flight; one failure does not stop the others.
-    await Promise.allSettled(
-      jobs
+    // Drain in rounds: one batch per turn falls behind, since every turn adds
+    // several clip nodes. Stop when nothing is pending or a round lands nothing.
+    for (let round = 0; round < SUMMARY_ROUNDS; round++) {
+      const raw = await cythJson($, cwd, ['pending', '--limit', String(SUMMARY_BATCH)])
+      const jobs = ((Array.isArray(raw) ? raw : []) as { ref?: unknown; prompt?: unknown }[])
         .filter(j => typeof j.ref === 'string' && typeof j.prompt === 'string')
-        .map(j => summarizeOne($, cwd, model, j.ref as string, j.prompt as string)),
-    )
+      if (jobs.length === 0) return
+      // At most SUMMARY_BATCH in flight; one failure does not stop the others.
+      const done = await Promise.allSettled(jobs.map(j => summarizeOne($, cwd, model, j.ref as string, j.prompt as string)))
+      if (!done.some(d => d.status === 'fulfilled' && d.value)) return
+    }
   } finally {
     summarizing = false
   }
@@ -245,17 +246,10 @@ async function afterTurn($: EngineInterface, agentId: string | undefined, cwd: s
   } catch (err) {
     failNote($, 'status', err)
   }
-  if (agentId === undefined) {
-    const at = numberEnv(await $.env.get('CYTH_COMPACT_AT'), DEFAULT_COMPACT_AT)
-    const { context } = await $.session.usage()
-    if ((context.tokens ?? 0) > at) {
-      try {
-        await $.session.compact()
-      } catch (err) {
-        failNote($, 'compact trigger', err)
-      }
-    }
-  }
+  // No compaction trigger of our own: a `$.session.compact()` this module
+  // raises skips this module's own session.compact hook (re-entry), so the
+  // engine's summarizer would run instead. The engine's own triggers (auto
+  // near the window limit, /compact) reach the hook below.
   try {
     await summarize($, cwd)
     await showStatus($, cwd)
@@ -339,19 +333,36 @@ export const register: Register = on => {
       failNote($, 'tool registration', err)
     }
     const started = await next(e)
+    const cwd = await $.session.cwd()
     try {
-      await showStatus($, await $.session.cwd())
+      await showStatus($, cwd)
     } catch (err) {
       failNote($, 'status', err)
     }
+    // Work down the backlog other sessions left, off the start's path.
+    $.clock.after(1000, () => {
+      summarize($, cwd).catch(err => failNote($, 'summaries', err))
+    })
     return started
   })
 
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
-    if (await disabled($)) return composed
-    return { sections: [...composed.sections, { id: `${PLUGIN}:contract`, text: CONTRACT, scope: 'session' as const }] }
-  })
+  // The view block rides on the conversation's first user message, beside
+  // CLAUDE.md, from the first request on: a new session sees the project's
+  // tree at once. The engine asks again after a compaction. If the view
+  // cannot be built, nothing is added, so nothing claims a <memory> that is
+  // not there.
+  on('prompt.context', async ($, e, next) => {
+    const ctx = await next(e)
+    if (await disabled($)) return ctx
+    try {
+      const cwd = await $.session.cwd()
+      const block = await viewBlock($, cwd, await $.session.id())
+      return { ...ctx, blocks: [...ctx.blocks.filter(b => b.name !== CONTEXT_BLOCK), { name: CONTEXT_BLOCK, text: block }] }
+    } catch (err) {
+      failNote($, 'view', err)
+      return ctx
+    }
+  }).catch(($, e, next) => next(e))
 
   // Transcript paths, as the classic Stop events carry them (they fire before turn.complete).
   on('classic.Stop', ($, e, next) => {
@@ -368,8 +379,7 @@ export const register: Register = on => {
     if (await disabled($)) return done
     const cwd = await $.session.cwd()
     const agentId = e.agentId
-    // Off the turn's path: compaction is refused while a turn runs, and
-    // summaries must never block one.
+    // Off the turn's path: summaries must never block one.
     $.clock.after(250, () => {
       afterTurn($, agentId, cwd).catch(err => failNote($, 'after-turn', err))
     })

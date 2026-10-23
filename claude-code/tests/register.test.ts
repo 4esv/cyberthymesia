@@ -76,26 +76,11 @@ test('turn.complete uses the transcript path a Stop event carried', async ($, on
   expect(sync?.argv.at(-1)).toBe('/elsewhere/t.jsonl')
 })
 
-test('turn.complete over the token threshold asks the session to compact', async ($, on) => {
+test('turn.complete never raises a compaction itself (its own hook would be skipped)', async ($, on) => {
   const clock = mock.clock(on)
   world(on, { cli: goodCli, env: { CYTH_COMPACT_AT: '50' } })
   let compacts = 0
-  on('session.usage', () => ({ value: { context: { tokens: 51 } } as never }))
-  on('session.compact', () => {
-    compacts++
-    return { skip: 'engine native' }
-  })
-  on('turn.complete', () => ({ text: 'done' }))
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
-  await clock.advance(1000)
-  expect(compacts).toBe(1)
-})
-
-test('turn.complete under the threshold does not compact', async ($, on) => {
-  const clock = mock.clock(on)
-  world(on, { cli: goodCli, env: { CYTH_COMPACT_AT: '50' } })
-  let compacts = 0
-  on('session.usage', () => ({ value: { context: { tokens: 50 } } as never }))
+  on('session.usage', () => ({ value: { context: { tokens: 9_999_999 } } as never }))
   on('session.compact', () => {
     compacts++
     return { skip: 'engine native' }
@@ -116,13 +101,17 @@ test('turn.complete: an ingest failure fails open with a status line', async ($,
   expect(w.statuses.some(s => s?.startsWith('cyth: ingest failed, native behaviour'))).toBe(true)
 })
 
-test('session.compact answers one view message then the kept tail', async ($, on) => {
+test('session.compact folds, answers the kept tail and re-asks prompt.context for the view', async ($, on) => {
   const w = world(on, { cli: goodCli, env: { CYTH_TAIL: '40' } })
+  const invalidated: string[] = []
+  on('ui.invalidate', (_, e) => {
+    invalidated.push((e as { event: string }).event)
+    return { value: undefined }
+  })
   on('session.compact', () => ({ skip: 'engine native' }))
   const r = await $.session.compact(compactInput as never)
-  expect(r).toEqual({
-    messages: [{ role: 'user', text: '<memory>VIEWBLOCK</memory>', toolUses: [] }, MESSAGES[2], MESSAGES[3]],
-  })
+  expect(r).toEqual({ messages: [MESSAGES[2], MESSAGES[3]] })
+  expect(invalidated).toEqual(['prompt.context'])
   const subs = w.runs.map(x => sub(x.argv))
   expect(subs).toEqual(['sync-claude', 'seq', 'fold', 'view', 'status'])
   const argvOf = (s: string) => w.runs.find(x => sub(x.argv) === s)!.argv
@@ -206,7 +195,7 @@ test('session.compact survives a status failure after a good compaction', async 
   world(on, { cli: argv => (sub(argv) === 'status' ? { exitCode: 1 } : goodCli(argv)), env: { CYTH_TAIL: '40' } })
   on('session.compact', () => ({ skip: 'engine native' }))
   const r = await $.session.compact(compactInput as never)
-  expect(r.messages?.[0]?.text).toBe('<memory>VIEWBLOCK</memory>')
+  expect(r).toEqual({ messages: [MESSAGES[2], MESSAGES[3]] })
 })
 
 test('CYTH_DISABLE=1 passes every hook through and runs no CLI', async ($, on) => {
@@ -215,6 +204,7 @@ test('CYTH_DISABLE=1 passes every hook through and runs no CLI', async ($, on) =
   on('session.start', () => ({ cwd: CWD }) as never)
   on('session.usage', () => ({ value: { context: { tokens: 9_999_999 } } as never }))
   on('prompt.compose', () => ({ sections: [] }))
+  on('prompt.context', () => ({ blocks: [] }) as never)
   on('turn.complete', () => ({ text: 'native turn' }))
   on('session.compact', () => ({ skip: 'engine native' }))
   on('tool.call', () => ({ result: 'native tool' }))
@@ -228,6 +218,7 @@ test('CYTH_DISABLE=1 passes every hook through and runs no CLI', async ($, on) =
   expect(registered).toBe(0)
   const p = await $.prompt.compose({ model: 'm', promptModel: 'm', outputStyle: null, tools: [], traits: [], surfaces: ['terminal'], sections: [] } as never)
   expect(p.sections).toEqual([])
+  expect((await $.prompt.context({ blocks: [] } as never)).blocks).toEqual([])
   expect(await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't' } as never)).toEqual({ text: 'native turn' })
   await clock.advance(5000)
   expect(await $.session.compact(compactInput as never)).toEqual({ skip: 'engine native' })
@@ -319,15 +310,105 @@ test('a tool for another server is not served', async ($, on) => {
   expect(w.runs).toHaveLength(0)
 })
 
-test('prompt.compose appends the contract section last', async ($, on) => {
-  world(on)
+test('prompt.context adds the view block after the engine blocks, from the first request', async ($, on) => {
+  const w = world(on, { cli: goodCli })
+  on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: 'md' }] }) as never)
+  const r = await $.prompt.context({ blocks: [] } as never)
+  expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'md' }, { name: 'cyberthymesia', text: '<memory>VIEWBLOCK</memory>' }])
+  expect(w.runs.map(x => x.argv)).toEqual([['node', BIN, '--cwd', CWD, '--json', 'view', 'claude', SID]])
+})
+
+test('prompt.context fails open: no view, no block, a status line', async ($, on) => {
+  const w = world(on, { cli: argv => (sub(argv) === 'view' ? { exitCode: 1, stderr: 'boom' } : goodCli(argv)) })
+  on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: 'md' }] }) as never)
+  const r = await $.prompt.context({ blocks: [] } as never)
+  expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'md' }])
+  expect(w.statuses.at(-1)).toContain('cyth: view failed')
+})
+
+test('prompt.context with an empty view block adds nothing', async ($, on) => {
+  world(on, { cli: argv => (sub(argv) === 'view' ? { exitCode: 0, stdout: '{"block":" "}' } : goodCli(argv)) })
+  on('prompt.context', () => ({ blocks: [] }) as never)
+  const r = await $.prompt.context({ blocks: [] } as never)
+  expect(r.blocks).toEqual([])
+})
+
+test('the mod no longer adds a system-prompt section of its own', async ($, on) => {
+  world(on, { cli: goodCli })
   on('prompt.compose', () => ({ sections: [{ id: 'base', text: 'base prompt', scope: 'session' }] }) as never)
   const p = await $.prompt.compose({ model: 'm', promptModel: 'm', outputStyle: null, tools: [], traits: [], surfaces: ['terminal'], sections: [] } as never)
-  expect(p.sections).toHaveLength(2)
-  expect(p.sections[0]!.id).toBe('base')
-  const last = p.sections.at(-1)!
-  expect(last.id).toBe('cyberthymesia:contract')
-  expect(last.scope).toBe('session')
-  expect(last.text).toContain('memory_find')
-  expect(last.text).toContain('memory_zoom')
+  expect(p.sections.map(x => x.id)).toEqual(['base'])
+})
+
+/** A CLI with `left` pending jobs; each put lands and removes one. */
+function backlogCli(left: number, putOk = true): { cli: Cli; puts: () => number } {
+  let puts = 0
+  const cli: Cli = argv => {
+    const s = sub(argv)
+    if (s === 'pending') {
+      const n = Math.min(Number(argv[7] ?? 4), left)
+      return { exitCode: 0, stdout: JSON.stringify(Array.from({ length: n }, (_, k) => ({ ref: `#${k}`, prompt: `p${k}` }))) }
+    }
+    if (s === 'put') {
+      puts++
+      if (putOk) left--
+      return { exitCode: 0, stdout: JSON.stringify({ ok: putOk }) }
+    }
+    return goodCli(argv)
+  }
+  return { cli, puts: () => puts }
+}
+
+test('summaries drain the backlog in rounds after a turn, on the cheap model', async ($, on) => {
+  const clock = mock.clock(on)
+  const b = backlogCli(10)
+  world(on, { cli: b.cli })
+  const models: string[] = []
+  on('model.complete', (_, e) => {
+    models.push((e as { model: string }).model)
+    return { value: { isAnswered: true, text: 'a short summary' } } as never
+  })
+  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  await clock.advance(5000)
+  expect(b.puts()).toBe(10)
+  expect(new Set(models)).toEqual(new Set(['haiku']))
+})
+
+test('summaries stop after a round that lands nothing', async ($, on) => {
+  const clock = mock.clock(on)
+  const b = backlogCli(10, false)
+  world(on, { cli: b.cli })
+  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
+  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  await clock.advance(5000)
+  expect(b.puts()).toBe(4)
+})
+
+test('summaries stop at the round cap', async ($, on) => {
+  const clock = mock.clock(on)
+  const b = backlogCli(1000)
+  world(on, { cli: b.cli })
+  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
+  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  await clock.advance(5000)
+  expect(b.puts()).toBe(32)
+})
+
+test('session.start drains the backlog in the background', async ($, on) => {
+  const clock = mock.clock(on)
+  const b = backlogCli(6)
+  world(on, { cli: b.cli })
+  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
+  on('session.start', () => ({ cwd: CWD }) as never)
+  on('tool.register', () => ({ value: { name: 'x' } as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  expect(b.puts()).toBe(0)
+  await clock.advance(5000)
+  expect(b.puts()).toBe(6)
 })

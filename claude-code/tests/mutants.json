@@ -86,9 +86,9 @@
  {
   "id": "M13",
   "file": "claude-code/hooks/register.ts",
-  "find": "if (await disabled($)) return composed",
-  "replace": "",
-  "guard": "contract not injected when disabled"
+  "find": "    const ctx = await next(e)\n    if (await disabled($)) return ctx",
+  "replace": "    const ctx = await next(e)",
+  "guard": "view block not added when disabled"
  },
  {
   "id": "M14",
@@ -96,13 +96,6 @@
   "find": "if (await disabled($)) return done",
   "replace": "",
   "guard": "no after-turn work when disabled"
- },
- {
-  "id": "M15",
-  "file": "claude-code/hooks/register.ts",
-  "find": "(context.tokens ?? 0) > at",
-  "replace": "(context.tokens ?? 0) >= at",
-  "guard": "compaction threshold strict"
  },
  {
   "id": "M16",
@@ -117,5 +110,75 @@
   "find": "    failNote($, 'ingest', err)\n    return",
   "replace": "    return",
   "guard": "ingest failure surfaces a status line"
+ },
+ {
+  "id": "M18",
+  "file": "claude-code/hooks/register.ts",
+  "find": "blocks: [...ctx.blocks.filter(b => b.name !== CONTEXT_BLOCK), { name: CONTEXT_BLOCK, text: block }]",
+  "replace": "blocks: ctx.blocks",
+  "guard": "prompt.context adds the view block"
+ },
+ {
+  "id": "M19",
+  "file": "claude-code/hooks/register.ts",
+  "find": "      failNote($, 'view', err)\n      return ctx",
+  "replace": "      failNote($, 'view', err)\n      return { ...ctx, blocks: [...ctx.blocks, { name: CONTEXT_BLOCK, text: \"## Memory: cyberthymesia\" }] }",
+  "guard": "prompt.context fails open with no block"
+ },
+ {
+  "id": "M20",
+  "file": "claude-code/hooks/register.ts",
+  "find": "  if (block.trim() === '') throw new Error('empty view block')",
+  "replace": "",
+  "guard": "empty view block refused"
+ },
+ {
+  "id": "M21",
+  "file": "claude-code/hooks/register.ts",
+  "find": "  $.ui.invalidate('prompt.context')\n",
+  "replace": "",
+  "guard": "compaction re-asks prompt.context"
+ },
+ {
+  "id": "M22",
+  "file": "claude-code/hooks/register.ts",
+  "find": "  return { messages: e.messages.slice(cut.index) }",
+  "replace": "  return { messages: e.messages }",
+  "guard": "compaction keeps only the tail"
+ },
+ {
+  "id": "M23",
+  "file": "claude-code/hooks/register.ts",
+  "find": "      if (!done.some(d => d.status === 'fulfilled' && d.value)) return",
+  "replace": "",
+  "guard": "drain stops after a round that lands nothing"
+ },
+ {
+  "id": "M24",
+  "file": "claude-code/hooks/register.ts",
+  "find": "for (let round = 0; round < SUMMARY_ROUNDS; round++)",
+  "replace": "for (let round = 0; round < 1000; round++)",
+  "guard": "drain capped at 8 rounds"
+ },
+ {
+  "id": "M25",
+  "file": "claude-code/hooks/register.ts",
+  "find": "      if (jobs.length === 0) return\n",
+  "replace": "",
+  "guard": "drain ends when nothing is pending"
+ },
+ {
+  "id": "M26",
+  "file": "claude-code/hooks/register.ts",
+  "find": "    $.clock.after(1000, () => {\n      summarize($, cwd)",
+  "replace": "    $.clock.after(1000, () => {\n      void cwd; Promise.resolve()",
+  "guard": "session.start drains the backlog"
+ },
+ {
+  "id": "M27",
+  "file": "claude-code/hooks/register.ts",
+  "find": "  return put.ok === true",
+  "replace": "  return true",
+  "guard": "a refused put counts as no progress"
  }
 ]
