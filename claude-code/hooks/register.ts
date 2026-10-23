@@ -16,6 +16,8 @@ const PLUGIN = 'cyberthymesia'
 const DEFAULT_TAIL = 160 * 1024 // bytes (SPEC §3)
 const NODE_BYTES = 512 // SPEC §2
 const SUMMARY_BATCH = 4
+// A thinking model can spend a small cap on thought and answer nothing: low effort, room to reply.
+const SUMMARY_ASK = { maxTokens: 1024, effort: 'low' as const, timeoutMs: 60_000 }
 const SUMMARY_ROUNDS = 8 // batches per drain: at most 32 summaries per turn
 const CONTEXT_BLOCK = 'cyberthymesia'
 
@@ -193,19 +195,20 @@ async function viewBlock($: EngineInterface, cwd: string, session: string): Prom
 // ---------- after a turn: ingest, trigger, summaries ----------
 
 async function summarizeOne($: EngineInterface, cwd: string, model: string, ref: string, prompt: string): Promise<boolean> {
-  const first = await $.model.complete({ model, prompt, maxTokens: 400, timeoutMs: 60_000 })
+  const first = await $.model.complete({ model, prompt, ...SUMMARY_ASK })
   if (!first.isAnswered) return false
   let text = first.text.trim().replace(/\s*\n\s*/g, ' ')
+  if (text === '') return false // an empty answer is no summary; the clip stays
   const n = new TextEncoder().encode(text).length
   if (n > NODE_BYTES) {
     const retry = await $.model.complete({
       model,
       prompt: `${prompt}\n\n${text}\n\nToo long: ${n} bytes, limit ${NODE_BYTES}. Cut the least valuable items.`,
-      maxTokens: 400,
-      timeoutMs: 60_000,
+      ...SUMMARY_ASK,
     })
     if (!retry.isAnswered) return false
     text = retry.text.trim().replace(/\s*\n\s*/g, ' ')
+    if (text === '') return false
     if (new TextEncoder().encode(text).length > NODE_BYTES) return false // core keeps clip
   }
   const put = (await cythJson($, cwd, ['put', ref, text])) as { ok?: unknown }

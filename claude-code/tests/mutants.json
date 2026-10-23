@@ -180,5 +180,19 @@
   "find": "  return put.ok === true",
   "replace": "  return true",
   "guard": "a refused put counts as no progress"
+ },
+ {
+  "id": "M28",
+  "file": "claude-code/hooks/register.ts",
+  "find": "  if (text === '') return false // an empty answer is no summary; the clip stays\n",
+  "replace": "",
+  "guard": "an empty answer is not put"
+ },
+ {
+  "id": "M29",
+  "file": "claude-code/hooks/register.ts",
+  "find": "effort: 'low' as const",
+  "replace": "effort: undefined",
+  "guard": "summaries ask at low effort"
  }
 ]

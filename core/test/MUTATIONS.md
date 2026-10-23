@@ -151,7 +151,7 @@ guards only (the full index sweep above takes ~25 minutes). I104, L1, L2, P1 are
 | I107 | core/src/index.ts | dedupe keyed on timestamp | killed |
 | I108 | core/src/ingest.ts | engine compaction summary is not a user item | killed |
 
-## claude-code/hooks: 25/26 killed, 1 equivalent
+## claude-code/hooks: 27/28 killed, 1 equivalent
 Test command: `claude plugin test claude-code`. M15 (compaction threshold) was removed with the
 self-triggered compaction; M13 now guards the view block instead of the contract section.
 
@@ -183,6 +183,8 @@ self-triggered compaction; M13 now guards the view block instead of the contract
 | M25 | claude-code/hooks/register.ts | drain ends when nothing is pending | equivalent: an empty round lands nothing, so the no-progress stop ends the drain too |
 | M26 | claude-code/hooks/register.ts | session.start drains the backlog | killed |
 | M27 | claude-code/hooks/register.ts | a refused put counts as no progress | killed |
+| M28 | claude-code/hooks/register.ts | an empty answer is not put | killed |
+| M29 | claude-code/hooks/register.ts | summaries ask at low effort | killed |
 
 ## pi/src: 3/4 killed, 1 equivalent (pi/test/mutants.json)
 Test command: `node --test pi/test/extension.test.ts pi/test/plan.test.ts`

@@ -376,6 +376,25 @@ test('summaries drain the backlog in rounds after a turn, on the cheap model', a
   expect(new Set(models)).toEqual(new Set(['haiku']))
 })
 
+test('summaries: an empty answer is not put, and asks at low effort with room to answer', async ($, on) => {
+  const clock = mock.clock(on)
+  const b = backlogCli(10)
+  world(on, { cli: b.cli })
+  const asks: { effort?: string; maxTokens?: number }[] = []
+  on('model.complete', (_, e) => {
+    asks.push(e as never)
+    return { value: { isAnswered: true, text: '  ' } } as never
+  })
+  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  await clock.advance(5000)
+  expect(b.puts()).toBe(0)
+  expect(asks.length).toBe(4)
+  expect(asks[0]!.effort).toBe('low')
+  expect(asks[0]!.maxTokens).toBe(1024)
+})
+
 test('summaries stop after a round that lands nothing', async ($, on) => {
   const clock = mock.clock(on)
   const b = backlogCli(10, false)
