@@ -1,0 +1,723 @@
+[
+  {
+    "id": "I01",
+    "file": "core/src/index.ts",
+    "find": "if (exists.get(item.harness, item.session, item.uuid)) continue",
+    "replace": "if (false) continue",
+    "guard": "ingest idempotency on (harness,session,uuid)"
+  },
+  {
+    "id": "I02",
+    "file": "core/src/index.ts",
+    "find": "return { added, lastSeq: count - 1 }",
+    "replace": "return { added, lastSeq: count }",
+    "guard": "ingest lastSeq = count-1"
+  },
+  {
+    "id": "I03",
+    "file": "core/src/index.ts",
+    "find": "      added++\n",
+    "replace": "      added += 0\n",
+    "guard": "ingest added counter"
+  },
+  {
+    "id": "I04",
+    "file": "core/src/index.ts",
+    "find": "if (item.thinking) insRaw.run",
+    "replace": "if (!item.thinking) insRaw.run",
+    "guard": "ingest records thinking in raw"
+  },
+  {
+    "id": "I05",
+    "file": "core/src/index.ts",
+    "find": "const body = tool !== null ? `${tool.name} ${canonical(tool.input)}\\n${text}` : text",
+    "replace": "const body = text",
+    "guard": "ingest FTS body of a tool includes name+input"
+  },
+  {
+    "id": "I06",
+    "file": "core/src/index.ts",
+    "find": "while (i % 2 === 1) {",
+    "replace": "while (i % 3 === 1) {",
+    "guard": "cascade condition: merge only at odd index"
+  },
+  {
+    "id": "I07",
+    "file": "core/src/index.ts",
+    "find": "const b = getNode(pl - 1, pi * 2 + 1)!\n        let nsource",
+    "replace": "const b = getNode(pl - 1, pi * 2)!\n        let nsource",
+    "guard": "cascade parity: right child is 2*pi+1"
+  },
+  {
+    "id": "I08",
+    "file": "core/src/index.ts",
+    "find": "if (a.meta !== null && b.meta !== null) {",
+    "replace": "if (a.meta !== null || b.meta !== null) {",
+    "guard": "det-vs-clip merge: det only if both children det"
+  },
+  {
+    "id": "I09",
+    "file": "core/src/index.ts",
+    "find": "const t = seq === 0 ? tag(item.harness, item.session) : (() => {",
+    "replace": "const t = seq === 0 ? null : (() => {",
+    "guard": "tag on first leaf (ingest)"
+  },
+  {
+    "id": "I10",
+    "file": "core/src/index.ts",
+    "find": "return p && p.harness === item.harness && p.session === item.session ? null : tag(item.harness, item.session)\n      })()",
+    "replace": "return p && p.harness === item.harness ? null : tag(item.harness, item.session)\n      })()",
+    "guard": "tag on session change (ingest): session compared"
+  },
+  {
+    "id": "I11",
+    "file": "core/src/index.ts",
+    "find": "if (seq === 0) return tag(item.harness, item.session)",
+    "replace": "if (seq === 0) return null",
+    "guard": "tag on first leaf (leafTag for put/forget)"
+  },
+  {
+    "id": "I12",
+    "file": "core/src/index.ts",
+    "find": "return prev.harness === item.harness && prev.session === item.session ? null : tag(item.harness, item.session)\n  }",
+    "replace": "return prev.harness === item.harness ? null : tag(item.harness, item.session)\n  }",
+    "guard": "tag on session change (leafTag): session compared"
+  },
+  {
+    "id": "I13",
+    "file": "core/src/index.ts",
+    "find": "if (isDirective(row)) insPin.run",
+    "replace": "if (!isDirective(row)) insPin.run",
+    "guard": "directive pin created"
+  },
+  {
+    "id": "I14",
+    "file": "core/src/index.ts",
+    "find": "if (!tk.ok) insPin.run(seq, 'failure'",
+    "replace": "if (tk.ok) insPin.run(seq, 'failure'",
+    "guard": "failure pin only when tool failed"
+  },
+  {
+    "id": "I15",
+    "file": "core/src/index.ts",
+    "find": "else resolveFail.run('failure', tk.key)",
+    "replace": "else void 0",
+    "guard": "failure auto-resolves on later success"
+  },
+  {
+    "id": "I16",
+    "file": "core/src/index.ts",
+    "find": "WHERE kind = ? AND key = ? AND resolved = 0",
+    "replace": "WHERE kind = ? AND (key = ? OR 1) AND resolved = 0",
+    "guard": "auto-resolve matches on normalized key"
+  },
+  {
+    "id": "I17",
+    "file": "core/src/index.ts",
+    "find": "return size < r.offset ? 0 : r.offset",
+    "replace": "return r.offset",
+    "guard": "cursor reset when file shrank"
+  },
+  {
+    "id": "I18",
+    "file": "core/src/index.ts",
+    "find": "ON CONFLICT(file) DO UPDATE SET harness = excluded.harness, offset = excluded.offset",
+    "replace": "ON CONFLICT(file) DO NOTHING",
+    "guard": "cursor upsert advances offset"
+  },
+  {
+    "id": "I19",
+    "file": "core/src/index.ts",
+    "find": "ON CONFLICT(harness, session, id) DO UPDATE SET agent = excluded.agent, name = excluded.name, input = excluded.input, ts = excluded.ts",
+    "replace": "ON CONFLICT(harness, session, id) DO NOTHING",
+    "guard": "calls upsert refreshes a re-opened call"
+  },
+  {
+    "id": "I20",
+    "file": "core/src/index.ts",
+    "find": "for (const c of chunk.open) upsertCall(c)\n        for (const c of chunk.closed) deleteCall(c)\n        setCursor(file, 'claude'",
+    "replace": "for (const c of chunk.closed) deleteCall(c)\n        setCursor(file, 'claude'",
+    "guard": "syncClaude stores open calls"
+  },
+  {
+    "id": "I21",
+    "file": "core/src/index.ts",
+    "find": "for (const c of chunk.closed) deleteCall(c)\n        setCursor(file, 'pi'",
+    "replace": "setCursor(file, 'pi'",
+    "guard": "syncPi deletes closed calls"
+  },
+  {
+    "id": "I22",
+    "file": "core/src/index.ts",
+    "find": "      harness, session, id, name: r.name, ts: r.ts,\n      input: safeParse(r.input),",
+    "replace": "      harness, session, id, name: 'unknown', ts: r.ts,\n      input: null,",
+    "guard": "call lookup keeps name and input"
+  },
+  {
+    "id": "I23",
+    "file": "core/src/index.ts",
+    "find": "if (cwd === null || projectRoot(cwd) !== root) continue",
+    "replace": "if (cwd === null) continue",
+    "guard": "backfill filters claude files by project root"
+  },
+  {
+    "id": "I24",
+    "file": "core/src/index.ts",
+    "find": "if (hdr === null || hdr.cwd === '' || projectRoot(hdr.cwd) !== root) continue",
+    "replace": "if (hdr === null || hdr.cwd === '') continue",
+    "guard": "backfill filters pi files by project root"
+  },
+  {
+    "id": "I25",
+    "file": "core/src/index.ts",
+    "find": "items.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))",
+    "replace": "items.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))",
+    "guard": "backfill orders items by ts"
+  },
+  {
+    "id": "I26",
+    "file": "core/src/index.ts",
+    "find": "for (const c of open) upsertCall(c)",
+    "replace": "void open",
+    "guard": "backfill stores open calls"
+  },
+  {
+    "id": "I27",
+    "file": "core/src/index.ts",
+    "find": "Math.max(0, Math.min(opts?.tailStart ?? count, count))",
+    "replace": "Math.max(0, opts?.tailStart ?? count)",
+    "guard": "view tailStart clamped to <= count"
+  },
+  {
+    "id": "I28",
+    "file": "core/src/index.ts",
+    "find": "Math.max(0, Math.min(opts?.tailStart ?? count, count))",
+    "replace": "Math.min(opts?.tailStart ?? count, count)",
+    "guard": "view tailStart clamped to >= 0"
+  },
+  {
+    "id": "I29",
+    "file": "core/src/index.ts",
+    "find": "opts?.tailStart ?? count",
+    "replace": "opts?.tailStart ?? 0",
+    "guard": "view tailStart defaults to count"
+  },
+  {
+    "id": "I30",
+    "file": "core/src/index.ts",
+    "find": "fit(st, high, textOf)\n        persistView(h, s, st)\n      } else",
+    "replace": "persistView(h, s, st)\n      } else",
+    "guard": "view fits to high on creation"
+  },
+  {
+    "id": "I31",
+    "file": "core/src/index.ts",
+    "find": "st.high = high\n        persistView(h, s, st)",
+    "replace": "st.high = high",
+    "guard": "view persists a new high on existing view"
+  },
+  {
+    "id": "I32",
+    "file": "core/src/index.ts",
+    "find": "const bytess = bytes(block)",
+    "replace": "const bytess = block.length",
+    "guard": "view bytes is UTF-8 byte length"
+  },
+  {
+    "id": "I33",
+    "file": "core/src/index.ts",
+    "find": "const rootHex = mthHex(st.viewEnd)",
+    "replace": "const rootHex = mthHex(countItems())",
+    "guard": "view root is MTH at viewEnd"
+  },
+  {
+    "id": "I34",
+    "file": "core/src/index.ts",
+    "find": "const algedonic = pinned.over > 0",
+    "replace": "const algedonic = pinned.over >= 0",
+    "guard": "view algedonic only when pins over quota"
+  },
+  {
+    "id": "I35",
+    "file": "core/src/index.ts",
+    "find": "if (!last || last.sha !== sha) {",
+    "replace": "if (true) {",
+    "guard": "views_log dedupes on sha"
+  },
+  {
+    "id": "I36",
+    "file": "core/src/index.ts",
+    "find": "ORDER BY id DESC LIMIT 1",
+    "replace": "ORDER BY id ASC LIMIT 1",
+    "guard": "views_log compares to the latest entry"
+  },
+  {
+    "id": "I37",
+    "file": "core/src/index.ts",
+    "find": "if (h !== undefined && Number.isFinite(h) && h > 0) return h",
+    "replace": "if (h !== undefined && Number.isFinite(h) && h >= 0) return h",
+    "guard": "resolveHigh rejects non-positive explicit high"
+  },
+  {
+    "id": "I38",
+    "file": "core/src/index.ts",
+    "find": "return Number.isFinite(n) && n > 0 ? n : HIGH",
+    "replace": "return Number.isFinite(n) && n >= 0 ? n : HIGH",
+    "guard": "resolveHigh rejects non-positive CYTH_HIGH"
+  },
+  {
+    "id": "I39",
+    "file": "core/src/index.ts",
+    "find": "if (existing) return existing",
+    "replace": "if (false) return existing",
+    "guard": "ensureView reuses an existing view"
+  },
+  {
+    "id": "I40",
+    "file": "core/src/index.ts",
+    "find": "st.tailStart = Math.min(Math.max(tailStart, st.tailStart), count)",
+    "replace": "st.tailStart = Math.min(tailStart, count)",
+    "guard": "fold forward-only (max with current tailStart)"
+  },
+  {
+    "id": "I41",
+    "file": "core/src/index.ts",
+    "find": "st.tailStart = Math.min(Math.max(tailStart, st.tailStart), count)",
+    "replace": "st.tailStart = Math.max(tailStart, st.tailStart)",
+    "guard": "fold clamps to count (min)"
+  },
+  {
+    "id": "I42",
+    "file": "core/src/index.ts",
+    "find": "fit(st, st.high, textOf)",
+    "replace": "fit(st, HIGH, textOf)",
+    "guard": "fold fits with the view's persisted high"
+  },
+  {
+    "id": "I43",
+    "file": "core/src/index.ts",
+    "find": "if (hi >= count) throw new Error(`zoom #${lo}-${hi}",
+    "replace": "if (hi > count) throw new Error(`zoom #${lo}-${hi}",
+    "guard": "zoom range: hi must be < count"
+  },
+  {
+    "id": "I44",
+    "file": "core/src/index.ts",
+    "find": "if (n >= count) throw new Error(`zoom #${n}: beyond store",
+    "replace": "if (n > count) throw new Error(`zoom #${n}: beyond store",
+    "guard": "zoom item: n must be < count"
+  },
+  {
+    "id": "I45",
+    "file": "core/src/index.ts",
+    "find": "if (r.offset > total) throw",
+    "replace": "if (r.offset >= total) throw",
+    "guard": "zoom item: offset may equal total, not exceed"
+  },
+  {
+    "id": "I46",
+    "file": "core/src/index.ts",
+    "find": "let end = Math.min(rest.length, PAGE)",
+    "replace": "let end = rest.length",
+    "guard": "zoom page capped at PAGE bytes"
+  },
+  {
+    "id": "I47",
+    "file": "core/src/index.ts",
+    "find": "while (end > 0 && (rest[end] & 0xc0) === 0x80) end--",
+    "replace": "while (false && (rest[end] & 0xc0) === 0x80) end--",
+    "guard": "zoom page never splits a UTF-8 code point"
+  },
+  {
+    "id": "I48",
+    "file": "core/src/index.ts",
+    "find": "const footer = endByte < total",
+    "replace": "const footer = endByte <= total",
+    "guard": "zoom footer: more only while bytes remain"
+  },
+  {
+    "id": "I49",
+    "file": "core/src/index.ts",
+    "find": "catch { rows = pick(q.split",
+    "replace": "catch { rows = []; pick(q.split",
+    "guard": "search FTS syntax-error fallback runs the quoted query"
+  },
+  {
+    "id": "I50",
+    "file": "core/src/index.ts",
+    "find": ".replace(/\"/g, '\"\"')",
+    "replace": ".replace(/\"/g, '')",
+    "guard": "search fallback escapes embedded quotes"
+  },
+  {
+    "id": "I51",
+    "file": "core/src/index.ts",
+    "find": "opts?.limit ?? 20",
+    "replace": "opts?.limit ?? 21",
+    "guard": "search default limit 20"
+  },
+  {
+    "id": "I52",
+    "file": "core/src/index.ts",
+    "find": "try { re = new RegExp(q, 'i') } catch { return `no hits for ${q}` }",
+    "replace": "re = new RegExp(q, 'i')",
+    "guard": "search regex: invalid pattern gives no hits"
+  },
+  {
+    "id": "I53",
+    "file": "core/src/index.ts",
+    "find": "re = new RegExp(q, 'i')",
+    "replace": "re = new RegExp(q, '')",
+    "guard": "search regex is case-insensitive"
+  },
+  {
+    "id": "I54",
+    "file": "core/src/index.ts",
+    "find": "SELECT rowid, body FROM items_fts ORDER BY rowid DESC",
+    "replace": "SELECT rowid, body FROM items_fts ORDER BY rowid ASC",
+    "guard": "search regex newest first"
+  },
+  {
+    "id": "I55",
+    "file": "core/src/index.ts",
+    "find": "if (hits.length >= limit) break",
+    "replace": "if (hits.length > limit) break",
+    "guard": "search regex honours limit"
+  },
+  {
+    "id": "I56",
+    "file": "core/src/index.ts",
+    "find": "const start = Math.max(0, idx - 60)",
+    "replace": "const start = idx - 60",
+    "guard": "search regex snippet window start clamped at 0"
+  },
+  {
+    "id": "I57",
+    "file": "core/src/index.ts",
+    "find": "bytes(out) + bytes(line) > PAGE",
+    "replace": "bytes(out) + bytes(line) > PAGE * 100",
+    "guard": "search output capped at PAGE"
+  },
+  {
+    "id": "I58",
+    "file": "core/src/index.ts",
+    "find": "if (hits.length === 0) return `no hits for ${q}`",
+    "replace": "if (hits.length === 1) return `no hits for ${q}`",
+    "guard": "search empty result message"
+  },
+  {
+    "id": "I59",
+    "file": "core/src/index.ts",
+    "find": "if ('l' in r) throw new Error(`pin: ${ref} is a range",
+    "replace": "if (false) throw new Error(`pin: ${ref} is a range",
+    "guard": "pin rejects ranges"
+  },
+  {
+    "id": "I60",
+    "file": "core/src/index.ts",
+    "find": "if (r.offset !== 0) throw new Error(`pin: ${ref} has an offset",
+    "replace": "if (r.offset < 0) throw new Error(`pin: ${ref} has an offset",
+    "guard": "pin rejects offsets"
+  },
+  {
+    "id": "I61",
+    "file": "core/src/index.ts",
+    "find": "if (r.item >= countItems()) throw",
+    "replace": "if (r.item > countItems()) throw",
+    "guard": "pin rejects item beyond store"
+  },
+  {
+    "id": "I62",
+    "file": "core/src/index.ts",
+    "find": "if (!r || r.resolved !== 0) throw new Error(`unpin: no open pin ${id}`)",
+    "replace": "if (!r) throw new Error(`unpin: no open pin ${id}`)",
+    "guard": "unpin unknown id throws"
+  },
+  {
+    "id": "I63",
+    "file": "core/src/index.ts",
+    "find": "if (!r || r.resolved !== 0) throw new Error(`unpin: no open pin ${id}`)",
+    "replace": "if (r.resolved !== 0) throw new Error(`unpin: no open pin ${id}`)",
+    "guard": "unpin resolved pin throws"
+  },
+  {
+    "id": "I64",
+    "file": "core/src/index.ts",
+    "find": "SELECT id, seq, reason, kind FROM pins WHERE resolved = 0 ORDER BY id ASC",
+    "replace": "SELECT id, seq, reason, kind FROM pins ORDER BY id ASC",
+    "guard": "pins() lists open pins only"
+  },
+  {
+    "id": "I65",
+    "file": "core/src/index.ts",
+    "find": "SELECT id, seq, reason, kind, key FROM pins WHERE resolved = 0 ORDER BY id ASC",
+    "replace": "SELECT id, seq, reason, kind, key FROM pins ORDER BY id ASC",
+    "guard": "view pinned block lists open pins only"
+  },
+  {
+    "id": "I66",
+    "file": "core/src/index.ts",
+    "find": "SELECT l, i FROM nodes WHERE source = ? AND tries < 2 ORDER BY l ASC, i DESC LIMIT ?",
+    "replace": "SELECT l, i FROM nodes WHERE source = ? AND tries < 3 ORDER BY l ASC, i DESC LIMIT ?",
+    "guard": "pending: tries < 2"
+  },
+  {
+    "id": "I67",
+    "file": "core/src/index.ts",
+    "find": "ORDER BY l ASC, i DESC LIMIT ?",
+    "replace": "ORDER BY l DESC, i DESC LIMIT ?",
+    "guard": "pending: order leaves first"
+  },
+  {
+    "id": "I68",
+    "file": "core/src/index.ts",
+    "find": "ORDER BY l ASC, i DESC LIMIT ?",
+    "replace": "ORDER BY l ASC, i ASC LIMIT ?",
+    "guard": "pending: order newest first within a level"
+  },
+  {
+    "id": "I69",
+    "file": "core/src/index.ts",
+    "find": "WHERE source = ? AND tries < 2 ORDER BY",
+    "replace": "WHERE source != ? AND tries < 2 ORDER BY",
+    "guard": "pending: only clip nodes"
+  },
+  {
+    "id": "I70",
+    "file": "core/src/index.ts",
+    "find": "mergePrompt(nodeText(l - 1, i * 2), nodeText(l - 1, i * 2 + 1))",
+    "replace": "mergePrompt(nodeText(l - 1, i * 2), nodeText(l - 1, i * 2))",
+    "guard": "pending: merge prompt uses both children"
+  },
+  {
+    "id": "I71",
+    "file": "core/src/index.ts",
+    "find": "WHERE source = ? AND tries < 2').get('clip')",
+    "replace": "WHERE source = ?').get('clip')",
+    "guard": "status pending counts tries < 2"
+  },
+  {
+    "id": "I72",
+    "file": "core/src/index.ts",
+    "find": "if (cur.source === 'det' || cur.source === 'verbatim') return false",
+    "replace": "if (cur.source === 'verbatim') return false",
+    "guard": "put rejects det nodes"
+  },
+  {
+    "id": "I73",
+    "file": "core/src/index.ts",
+    "find": "if (cur.source === 'det' || cur.source === 'verbatim') return false",
+    "replace": "if (cur.source === 'det') return false",
+    "guard": "put rejects verbatim nodes"
+  },
+  {
+    "id": "I74",
+    "file": "core/src/index.ts",
+    "find": "if (t === '' || bytes(t) > NODE) {",
+    "replace": "if (bytes(t) > NODE) {",
+    "guard": "put rejects empty text"
+  },
+  {
+    "id": "I75",
+    "file": "core/src/index.ts",
+    "find": "if (t === '' || bytes(t) > NODE) {",
+    "replace": "if (t === '' || bytes(t) >= NODE) {",
+    "guard": "put rejects text > NODE bytes (boundary)"
+  },
+  {
+    "id": "I76",
+    "file": "core/src/index.ts",
+    "find": "if (t === '' || bytes(t) > NODE) {",
+    "replace": "if (t === '') {",
+    "guard": "put rejects text > NODE bytes"
+  },
+  {
+    "id": "I77",
+    "file": "core/src/index.ts",
+    "find": "SET tries = tries + 1 WHERE",
+    "replace": "SET tries = tries WHERE",
+    "guard": "put increments tries on rejection"
+  },
+  {
+    "id": "I78",
+    "file": "core/src/index.ts",
+    "find": "if (r.offset !== 0) return null",
+    "replace": "if (r.offset < 0) return null",
+    "guard": "put rejects refs with an offset"
+  },
+  {
+    "id": "I79",
+    "file": "core/src/index.ts",
+    "find": "      if (!cur) return false\n      if (cur.source === 'det'",
+    "replace": "      if (false) return false\n      if (cur.source === 'det'",
+    "guard": "put on a missing node returns false"
+  },
+  {
+    "id": "I80",
+    "file": "core/src/index.ts",
+    "find": "try { r = parseRef(ref) } catch { return null }",
+    "replace": "r = parseRef(ref)",
+    "guard": "put on a malformed ref returns false"
+  },
+  {
+    "id": "I81",
+    "file": "core/src/index.ts",
+    "find": "leafModel(leafPrefix(node.i), t), 'model'",
+    "replace": "leafModel('', t), 'model'",
+    "guard": "put leaf keeps the leaf prefix"
+  },
+  {
+    "id": "I82",
+    "file": "core/src/index.ts",
+    "find": "      if (node.l === 0) {\n        db.prepare('UPDATE nodes SET text = ?, source = ? WHERE",
+    "replace": "      if (node.l !== 0) {\n        db.prepare('UPDATE nodes SET text = ?, source = ? WHERE",
+    "guard": "put branch: leaf vs merge node"
+  },
+  {
+    "id": "I83",
+    "file": "core/src/index.ts",
+    "find": "if (!cur || cur.source !== 'model') return",
+    "replace": "if (!cur) return",
+    "guard": "forget only reverts model nodes"
+  },
+  {
+    "id": "I84",
+    "file": "core/src/index.ts",
+    "find": "SET text = ?, source = ?, tries = 0 WHERE l = ? AND i = ?').run(leaf.text",
+    "replace": "SET text = ?, source = ? WHERE l = ? AND i = ?').run(leaf.text",
+    "guard": "forget resets tries"
+  },
+  {
+    "id": "I85",
+    "file": "core/src/index.ts",
+    "find": "const text = mergeClip(nodeText(node.l - 1, node.i * 2), nodeText(node.l - 1, node.i * 2 + 1))",
+    "replace": "const text = mergeClip(nodeText(node.l - 1, node.i * 2), nodeText(node.l - 1, node.i * 2))",
+    "guard": "forget merge node recomputes mergeClip of children"
+  },
+  {
+    "id": "I86",
+    "file": "core/src/index.ts",
+    "find": "      if (node.l === 0) {\n        const leaf = leafText",
+    "replace": "      if (node.l !== 0) {\n        const leaf = leafText",
+    "guard": "forget leaf branch"
+  },
+  {
+    "id": "I87",
+    "file": "core/src/index.ts",
+    "find": "if (h !== r.hash) problems.push",
+    "replace": "if (false) problems.push",
+    "guard": "verify: item hash"
+  },
+  {
+    "id": "I88",
+    "file": "core/src/index.ts",
+    "find": "if (log.root !== expected) problems.push",
+    "replace": "if (false) problems.push",
+    "guard": "verify: MTH per views_log n"
+  },
+  {
+    "id": "I89",
+    "file": "core/src/index.ts",
+    "find": "recomputed.slice(0, n.n)",
+    "replace": "recomputed.slice(0, n.n - 1)",
+    "guard": "verify: MTH reference over first n items"
+  },
+  {
+    "id": "I90",
+    "file": "core/src/index.ts",
+    "find": "if (bytes(nd.text) > NODE) problems.push",
+    "replace": "if (false) problems.push",
+    "guard": "verify: node size"
+  },
+  {
+    "id": "I91",
+    "file": "core/src/index.ts",
+    "find": "if (bytes(nd.text) > NODE) problems.push",
+    "replace": "if (bytes(nd.text) >= NODE) problems.push",
+    "guard": "verify: node size boundary (512 ok)"
+  },
+  {
+    "id": "I92",
+    "file": "core/src/index.ts",
+    "find": "if (nd.text.includes('\\n')) problems.push",
+    "replace": "if (false) problems.push",
+    "guard": "verify: node newline"
+  },
+  {
+    "id": "I93",
+    "file": "core/src/index.ts",
+    "find": "if (nd.mh !== expected) problems.push(`node (${nd.l},${nd.i}) mh mismatch`)\n        } else {",
+    "replace": "if (false) problems.push(`node (${nd.l},${nd.i}) mh mismatch`)\n        } else {",
+    "guard": "verify: leaf mh"
+  },
+  {
+    "id": "I94",
+    "file": "core/src/index.ts",
+    "find": "if (nd.mh !== expected) problems.push(`node (${nd.l},${nd.i}) mh mismatch`)\n        }\n      }",
+    "replace": "if (false) problems.push(`node (${nd.l},${nd.i}) mh mismatch`)\n        }\n      }",
+    "guard": "verify: internal mh"
+  },
+  {
+    "id": "I95",
+    "file": "core/src/index.ts",
+    "find": "problems.push(`node (${nd.l},${nd.i}) missing children`); continue",
+    "replace": "continue",
+    "guard": "verify: missing children"
+  },
+  {
+    "id": "I96",
+    "file": "core/src/index.ts",
+    "find": "for (const c of cov) problems.push",
+    "replace": "for (const c of []) problems.push",
+    "guard": "verify: view coverage"
+  },
+  {
+    "id": "I97",
+    "file": "core/src/index.ts",
+    "find": "if (v.view_end > count) problems.push",
+    "replace": "if (v.view_end >= count) problems.push",
+    "guard": "verify: viewEnd > count"
+  },
+  {
+    "id": "I98",
+    "file": "core/src/index.ts",
+    "find": "problems.push(`view ${v.harness}/${v.session}: parts is not valid JSON`); continue",
+    "replace": "parts = []",
+    "guard": "verify: view parts JSON"
+  },
+  {
+    "id": "I99",
+    "file": "core/src/index.ts",
+    "find": "problems.push(`item #${r.seq}: meta is not valid JSON`)",
+    "replace": "void 0",
+    "guard": "verify: item meta JSON"
+  },
+  {
+    "id": "I100",
+    "file": "core/src/index.ts",
+    "find": "ok: problems.length === 0",
+    "replace": "ok: problems.length <= 1",
+    "guard": "verify: ok iff no problems"
+  },
+  {
+    "id": "I101",
+    "file": "core/src/index.ts",
+    "find": "try { return JSON.parse(s) } catch { return null }",
+    "replace": "return JSON.parse(s)",
+    "guard": "safeParse: malformed JSON never throws"
+  },
+  {
+    "id": "I102",
+    "file": "core/src/index.ts",
+    "find": "try { db.exec('ROLLBACK') } catch { /* already rolled back */ }",
+    "replace": "void 0",
+    "guard": "tx: rollback on error"
+  },
+  {
+    "id": "I103",
+    "file": "core/src/index.ts",
+    "find": "db.exec('COMMIT')\n      return r",
+    "replace": "return r",
+    "guard": "tx: commit"
+  }
+]

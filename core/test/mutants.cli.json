@@ -1,0 +1,20 @@
+[
+{"id":"C1","file":"core/bin/cyth.ts","find":"if (pos.length !== n + 1) throw","replace":"if (false) throw","guard":"arity: wrong arg count is a usage error"},
+{"id":"C2","file":"core/bin/cyth.ts","find":"if (!/^-?\\d+$/.test(s)) throw","replace":"if (false) throw","guard":"integer check on seq/id/limit"},
+{"id":"C3","file":"core/bin/cyth.ts","find":"if (s !== 'claude' && s !== 'pi') throw","replace":"if (false) throw","guard":"harness must be claude or pi"},
+{"id":"C4","file":"core/bin/cyth.ts","find":"code: v.ok ? 0 : 1","replace":"code: 0","guard":"verify ok=false exits 1"},
+{"id":"C5","file":"core/bin/cyth.ts","find":"process.exitCode = e instanceof Usage ? 2 : 1","replace":"process.exitCode = 1","guard":"usage errors exit 2"},
+{"id":"C6","file":"core/bin/cyth.ts","find":"process.exitCode = e instanceof Usage ? 2 : 1","replace":"process.exitCode = 0","guard":"errors exit nonzero"},
+{"id":"C7","file":"core/bin/cyth.ts","find":"throw new Usage(`unknown flag","replace":"if (false) throw new Usage(`unknown flag","guard":"unknown flag rejected"},
+{"id":"C8","file":"core/bin/cyth.ts","find":"const line = flags.get('--json') === true ? JSON.stringify(out.json) : out.human","replace":"const line = out.human","guard":"--json emits JSON"},
+{"id":"C9","file":"core/bin/cyth.ts","find":"return { json: { ok: stored }, human: stored ? 'ok' : 'not stored' }","replace":"if (!stored) throw new Error('not stored'); return { json: { ok: stored }, human: 'ok' }","guard":"put false is not an error"},
+{"id":"C10","file":"core/bin/cyth.ts","find":"...(flags.get('--regex') === true ? { regex: true } : {})","replace":"...({})","guard":"--regex reaches search"},
+{"id":"C11","file":"core/bin/cyth.ts","find":"...(limit === undefined ? {} : { limit })","replace":"...({})","guard":"--limit reaches search"},
+{"id":"C12","file":"core/bin/cyth.ts","find":"home === undefined ? undefined : { home }","replace":"undefined","guard":"--home selects the store home"},
+{"id":"C13","file":"core/bin/cyth.ts","find":"store = openStore(str('--cwd') ?? process.cwd()","replace":"store = openStore(process.cwd()","guard":"--cwd selects the project"},
+{"id":"C14","file":"core/bin/cyth.ts","find":"open().pending(int('--limit') ?? 20)","replace":"open().pending(20)","guard":"pending --limit honoured"},
+{"id":"C15","file":"core/bin/cyth.ts","find":"throw new Usage(`unknown command","replace":"return done(); throw new Usage(`unknown command","guard":"unknown command exits 2"},
+{"id":"C16","file":"core/bin/cyth.ts","find":"const r = cmd === 'sync-claude' ? open().syncClaude(rest[0]) : open().syncPi(rest[0])","replace":"const r = open().syncPi(rest[0])","guard":"sync-claude routes to syncClaude"},
+{"id":"C17","file":"core/bin/cyth.ts","find":"open().fold(h, rest[1], seq)","replace":"open().fold(h, rest[1], 0)","guard":"fold passes seq"},
+{"id":"C18","file":"core/bin/cyth.ts","find":"if (v === undefined) throw new Usage(`${name} needs a value`)","replace":"","guard":"value flag without a value is a usage error"}
+]
