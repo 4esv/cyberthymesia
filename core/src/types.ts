@@ -26,7 +26,6 @@ export type ViewResult = {
 export type Status = {
   items: number
   nodes: number
-  pending: number
   pins: number
   algedonic: boolean
   root: string
@@ -63,9 +62,6 @@ export interface Store {
   pin(ref: string, reason: string): number
   unpin(id: number): void
   pins(): string
-  pending(limit: number): { ref: string; prompt: string }[]
-  put(ref: string, text: string): boolean
-  forget(ref: string): void
   forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan
   status(): Status
   verify(): { ok: boolean; problems: string[] }

@@ -385,13 +385,6 @@ test('P3 every node text is <= 512 bytes and one line', () => {
       const rl = s.roots().split('\n')
       assert.equal(rl.length, rootsOf(n).length)
       for (const ln of rl) assert.ok(bytes(ln.slice(ln.indexOf('|') + 1)) <= NODE)
-      // model summaries: multi-line input is flattened, over-long is rejected
-      const pend = s.pending(6)
-      for (const q of pend) {
-        assert.equal(s.put(q.ref, 'x'.repeat(NODE + r.int(1, 50))), false, 'over-long put rejected')
-        assert.equal(s.put(q.ref, `summary ${words(r, 60)}\n\nsecond\tline`), true)
-      }
-      for (let l = 1; 2 ** l <= n; l++) for (let i = 0; (i + 1) * 2 ** l <= n; i++) for (const ln of s.zoom(refOf(l, i)).split('\n')) assert.ok(bytes(ln.slice(ln.indexOf('|') + 1)) <= NODE)
       assert.deepEqual(s.verify().problems, [])
     })
   })
@@ -635,7 +628,7 @@ test('P8 determinism: the same input gives byte-identical view blocks', () => {
             log.push(v.block, JSON.stringify([v.viewEnd, v.tailStart, v.bytes, v.root, v.algedonic]))
           }
         }
-        log.push(JSON.stringify(s.status()), JSON.stringify(s.pending(10)), s.roots())
+        log.push(JSON.stringify(s.status()), s.roots())
         return log
       })
     const a = run()

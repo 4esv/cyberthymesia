@@ -47,7 +47,7 @@ function fakeStore(seqByUuid: Map<string, number>, opts: { throwOn?: string } = 
 		fold(h, sess, t) { calls.push(`fold ${t}`); tailStart = t; },
 		zoom: (ref) => { if (ref === "#3-9") throw new Error("bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it"); return `zoom ${ref}`; }, search: (q) => `search ${q}`, pin: () => 7, unpin: () => {}, pins: () => "<pinned></pinned>",
 		pending: () => { calls.push("pending"); return []; }, put: () => { calls.push("put"); return true; },
-		status: () => ({ items: 9, nodes: 9, pending: 0, pins: 0, algedonic: false, root: "r" }),
+		status: () => ({ items: 9, nodes: 9, pins: 0, algedonic: false, root: "r" }),
 		close() {},
 	};
 	return s;

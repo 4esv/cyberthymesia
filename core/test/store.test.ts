@@ -6,11 +6,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { NormItem, Store } from '../src/types.ts'
-import { NODE, PAGE, bytes } from '../src/util.ts'
-import { mergeClip, tag } from '../src/leaves.ts'
+import { PAGE, bytes } from '../src/util.ts'
+import { tag } from '../src/leaves.ts'
 
 const { openStore } = await import('../src/index.ts')
 
@@ -528,99 +528,20 @@ test('pin / unpin validation and listings', () => {
   assert.ok(s.pins().indexOf('first') < s.pins().indexOf('second'))
 })
 
-test('pending: filter, order, prompts; status.pending; put/forget', () => {
+test('legacy summaries: an old store with model nodes opens, verifies and zooms; status has no pending', () => {
   const { s, db } = mk()
   s.ingest([user(long('alpha'), 'sess1', 'n0'), user(long('beta'), 'sess1', 'n1'), tool('Bash', { command: 'x' }, 'ok', false, 'sess1', 'n2')])
-  const p = s.pending(10)
-  assert.deepEqual(p.map((x) => x.ref), ['#1', '#0', '#0-1'])
-  assert.match(p[0].prompt, /beta/)
-  assert.match(p[2].prompt, /alpha/)
-  assert.match(p[2].prompt, /beta/)
-  assert.ok(p[2].prompt.indexOf('alpha') < p[2].prompt.indexOf('beta'))
-  assert.equal(s.pending(1).length, 1)
-  assert.equal(s.status().pending, 3)
-  // two rejected puts exhaust a node's tries
-  assert.equal(s.put('#1', '   '), false)
-  assert.equal(s.put('#1', 'x'.repeat(2000)), false)
-  assert.equal(nodeRow(db(), 0, 1).tries, 2)
-  assert.deepEqual(s.pending(10).map((x) => x.ref), ['#0', '#0-1'])
-  assert.equal(s.status().pending, 2)
-})
-
-test('put: rejects det/verbatim/empty/oversize/missing/malformed, accepts boundary, prefixes, forget reverts', () => {
-  const { s, db } = mk()
-  s.ingest([
-    user(long('alpha'), 'abcd9', 'k0'),
-    user(long('beta'), 'abcd9', 'k1'),
-    tool('Bash', { command: 'x' }, 'ok', false, 'abcd9', 'k2'),
-    user('short verbatim', 'abcd9', 'k3'),
-    user(long('gamma'), 'wxyz8', 'k4'), // session change (same harness) at seq 4
-    user(long('delta'), 'wxyz8', 'k5'),
-  ])
-  assert.equal(s.put('#2', 'nope'), false) // det leaf
-  assert.equal(s.put('#3', 'nope'), false) // verbatim leaf
-  assert.equal(s.put('#999', 'x'), false) // missing node
-  assert.equal(s.put('not a ref', 'x'), false) // malformed
-  assert.equal(s.put('#0@5', 'x'), false) // offset
-  // leaf: keeps tag/prefix
-  assert.equal(s.put('#0', 'summary zero'), true)
-  assert.match(nodeRow(db(), 0, 0).text, /^u:@cbcd9 summary zero$/)
-  assert.equal(nodeRow(db(), 0, 0).source, 'model')
-  assert.equal(s.put('#1', 'summary one'), true)
-  assert.equal(nodeRow(db(), 0, 1).text, 'u:summary one')
-  assert.equal(s.put('#4', 'summary four'), true)
-  assert.match(nodeRow(db(), 0, 4).text, /^u:@cxyz8 summary four$/) // tag on session change
-  assert.equal(s.put('#5', 'summary five'), true)
-  assert.equal(nodeRow(db(), 0, 5).text, 'u:summary five')
-  // merge node: whole text, no prefix
-  assert.equal(s.put('#0-1', 'merged zero one'), true)
-  assert.equal(nodeRow(db(), 1, 0).text, 'merged zero one')
-  // boundary: exactly NODE bytes accepted on a merge node, NODE+1 rejected and counted
-  assert.equal(s.put('#4-5', 'y'.repeat(NODE)), true)
-  assert.equal(bytes(nodeRow(db(), 1, 2).text), NODE)
-  assert.deepEqual(s.verify(), { ok: true, problems: [] }) // 512-byte node is legal
-  s.forget('#4-5')
-  const before = nodeRow(db(), 1, 2).tries
-  assert.equal(s.put('#4-5', 'y'.repeat(NODE + 1)), false)
-  assert.equal(nodeRow(db(), 1, 2).tries, before + 1)
-  // forget: leaf back to clip, text restored, tries reset
-  assert.equal(s.put('#0', ''), false) // tries -> 1 (model node: allowed to retry)
-  assert.equal(nodeRow(db(), 0, 0).tries, 1)
-  assert.equal(s.put('#0', 'again'), true)
-  s.forget('#0')
-  assert.equal(nodeRow(db(), 0, 0).source, 'clip')
-  assert.equal(nodeRow(db(), 0, 0).tries, 0)
-  assert.match(nodeRow(db(), 0, 0).text, /^u:@cbcd9 alpha/)
-  s.forget('#3') // verbatim: untouched
-  assert.equal(nodeRow(db(), 0, 3).source, 'verbatim')
-  s.forget('#2') // det: untouched
-  assert.equal(nodeRow(db(), 0, 2).source, 'det')
-  s.forget('#1') // revert a model leaf mid-stream: no tag
-  assert.equal(nodeRow(db(), 0, 1).source, 'clip')
-  assert.match(nodeRow(db(), 0, 1).text, /^u:beta/)
-  // merge node forget recomputes from current children
-  assert.equal(s.put('#0-1', 'merged again'), true)
-  s.forget('#0-1')
+  // What an old adapter's put() left behind: model text on a leaf and a merge node, tries counted.
   const d = db()
-  assert.equal(nodeRow(d, 1, 0).source, 'clip')
-  assert.equal(nodeRow(d, 1, 0).text, mergeClip(nodeRow(d, 0, 0).text, nodeRow(d, 0, 1).text))
-  // forget on a clip node with tries>0 does nothing at all
-  assert.equal(s.put('#0', ''), false)
-  assert.equal(s.put('#0', ''), false)
-  const t0 = nodeRow(db(), 0, 0).tries
-  s.forget('#0')
-  assert.equal(nodeRow(db(), 0, 0).tries, t0)
-  s.forget('#9999') // missing: no throw
-  s.forget('bogus')
-})
-
-test('forget: model merge node whose children are clip with tries keeps tries on non-model', () => {
-  const { s, db } = mk()
-  s.ingest([user(long('a'), 'sess1', 'g0'), user(long('b'), 'sess1', 'g1')])
-  s.put('#0-1', '')
-  assert.equal(nodeRow(db(), 1, 0).tries, 1)
-  s.forget('#0-1')
-  assert.equal(nodeRow(db(), 1, 0).tries, 1)
+  d.prepare("UPDATE nodes SET text = 'u:@cess1 summary zero', source = 'model', tries = 1 WHERE l = 0 AND i = 0").run()
+  d.prepare("UPDATE nodes SET text = 'merged zero one', source = 'model' WHERE l = 1 AND i = 0").run()
+  d.close()
+  const t = openStore(s.root, { home: dirname(dirname(s.dbPath)) })
+  assert.deepEqual(t.verify(), { ok: true, problems: [] })
+  assert.equal(t.zoom('#0-1'), '#0|u:@cess1 summary zero\n#1|' + nodeRow(db(), 0, 1).text)
+  assert.match(t.view('claude', 'sess1', { tailStart: 3 }).block, /\n#0\|u:@cess1 alpha/, '<recent> is rebuilt from the item, not the summary')
+  assert.deepEqual(Object.keys(t.status()).sort(), ['algedonic', 'items', 'nodes', 'pins', 'root'])
+  assert.equal('pending' in t || 'put' in t || 'forget' in t, false, 'no summary queue in the API')
 })
 
 test('verify: detects tampering of every kind', () => {
@@ -682,33 +603,6 @@ test('commit is durable across a reopened store', () => {
   const t = openStore(cwd, { home })
   assert.equal(t.status().items, 1)
   t.close()
-})
-
-test('put: meta-commentary is rejected, counts as a try, and the node keeps its clip', () => {
-  const { s, db } = mk()
-  s.ingest([user(long('alpha'), 'sess1', 'm0'), user(long('beta'), 'sess1', 'm1')])
-  const metas = [
-    'Nothing in these two lines has lasting effect, so the merged line is empty.',
-    'The merged line: nothing of lasting value.',
-    'This summary covers the earlier discussion.',
-    'There is nothing worth keeping here.',
-    'No lasting effect.',
-  ]
-  for (const m of metas) assert.equal(s.put('#0-1', m), false, m)
-  assert.equal(nodeRow(db(), 1, 0).source, 'clip')
-  assert.ok(nodeRow(db(), 1, 0).tries >= 2) // pending() stops offering it, so the clip stays
-  assert.deepEqual(s.pending(10).map((x) => x.ref), ['#1', '#0'])
-  assert.equal(s.put('#0-1', 'Axel chose tabs over spaces for core/src.'), true)
-  assert.equal(nodeRow(db(), 1, 0).source, 'model')
-})
-
-test('summary prompts ask for content and forbid talking about summarizing', () => {
-  const { s } = mk()
-  s.ingest([user(long('alpha'), 'sess1', 'q0'), user(long('beta'), 'sess1', 'q1')])
-  for (const p of s.pending(10)) {
-    assert.match(p.prompt, /Never mention/)
-    assert.doesNotMatch(p.prompt, /lasting effect/)
-  }
 })
 
 test('default header budget is 8192 bytes of <recent> lines; no tree lines', async () => {
@@ -782,22 +676,6 @@ test('claude parser: entrypoint sdk-cli (claude -p) is one-shot, cli is not', ()
   assert.equal(s.syncClaude(f).added, 2)
   assert.match(s.pins(), /^\[1\] #1 directive/)
   assert.equal(s.status().pins, 1)
-})
-
-test('put: each meta-commentary pattern rejects on its own', () => {
-  const { s } = mk()
-  const metas = [
-    'These two lines describe the port change.', // "these two lines"
-    'Merged line: the build passed.', // "merged line"
-    'No lasting changes were made.', // "no lasting"
-    'Nothing of lasting interest happened.', // "nothing of … lasting"
-    'This summary covers the port change.', // "this summary"
-  ]
-  for (const [k, m] of metas.entries()) {
-    s.ingest([user(long('a' + k), 'sess1', 'p' + k + 'a'), user(long('b' + k), 'sess1', 'p' + k + 'b')])
-    assert.equal(s.put(`#${k * 2}-${k * 2 + 1}`, m), false, m)
-    assert.equal(s.put(`#${k * 2}-${k * 2 + 1}`, 'The port moved to 8443.'), true)
-  }
 })
 
 test('forgetSession: ambiguous prefix refuses; the session raw rows go', () => {

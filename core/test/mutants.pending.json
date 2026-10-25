@@ -1,0 +1,6 @@
+[
+  { "id": "Q01", "file": "core/src/index.ts", "find": "return { items, nodes, pins, algedonic, root: mthHex(items) }", "replace": "return { items, nodes, pending: Number(db.prepare(\"SELECT COUNT(*) AS c FROM nodes WHERE source = 'clip' AND tries < 2\").get().c), pins, algedonic, root: mthHex(items) }", "guard": "status has no pending count" },
+  { "id": "Q02", "file": "core/bin/cyth.ts", "find": "    case 'forget-session': {", "replace": "    case 'pending': { return { json: [], human: '' } }\n    case 'forget-session': {", "guard": "the CLI has no pending command" },
+  { "id": "Q03", "file": "core/src/index.ts", "find": "    // Remove one session's items", "replace": "    pending() { return [] },\n    // Remove one session's items", "guard": "the Store API has no summary queue" },
+  { "id": "Q04", "file": "core/src/index.ts", "find": "      for (const nd of db.prepare('SELECT l, i, text, meta, mh FROM nodes').all()) {", "replace": "      for (const nd of db.prepare('SELECT l, i, text, meta, mh FROM nodes').all()) {\n        if (/summary/.test(nd.text)) problems.push('model node')", "guard": "an old store's model nodes still verify" }
+]

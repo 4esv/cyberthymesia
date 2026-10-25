@@ -195,11 +195,6 @@ export function leafText(item: ItemRow, t: string | null): { text: string; sourc
   return { text: pre + clipMark(body, NODE - bytes(pre)), source: 'clip', meta: null }
 }
 
-// A leaf's text with a model summary in place of its body.
-export function leafModel(pre: string, summary: string): string {
-  return pre + clipMark(summary, NODE - bytes(pre))
-}
-
 export function mergeClip(a: string, b: string): string {
   return clipBytes(oneLine(a), MERGE_HALF) + SEP + clipBytes(oneLine(b), MERGE_HALF)
 }
@@ -223,28 +218,4 @@ export function aggText(m: AggMeta): string {
     .join(' ')
   const files = m.files.length > 0 ? '; files ' + m.files.map(([f]) => oneLine(f)).join(' ') : ''
   return clipMark(`t* ${tools}; ${m.oks} ok ${m.fails} ERR${files}`, NODE)
-}
-
-// Model summary prompts (SPEC §2), verbatim.
-export const LEAF_PROMPT =
-  'Write one line of at most 512 bytes that states what this message says: its decisions, facts, names, numbers and paths. State the content itself. Never mention summarizing, lines, the message or what you left out; if little is worth keeping, state its first point plainly. Invent nothing.'
-export const MERGE_PROMPT =
-  'Write one line of at most 512 bytes that states what these two adjacent lines say together: their decisions, facts, names, numbers and paths. State the content itself. Never mention merging, lines, summaries or what you left out; if little is worth keeping, state the first point plainly. Invent nothing.'
-
-// A model summary that talks about summarizing instead of stating content is
-// rejected (SPEC §2); the node then keeps its clipped verbatim text.
-export const META_OUTPUT =
-  /\b(these two lines?|the (two )?(adjacent|merged|input|given) lines?|(this|the) (summary|merged line|message)\b|merged line|nothing (of|with|in)\b[^.]{0,40}\b(lasting|worth|value|to (keep|summari[sz]e))|no lasting|lasting (effect|value)|nothing (worth|to) (keeping|summari[sz]e)|(can|could)(not|n['\u2019]t) (be )?summari[sz]e)/i
-export const INPUT_CAP = 200_000
-
-export function leafPrompt(text: string): string {
-  return LEAF_PROMPT + '\n<input>\n' + clipMark(text, INPUT_CAP) + '\n</input>'
-}
-
-export function mergePrompt(a: string, b: string): string {
-  return MERGE_PROMPT + '\n<input>\n' + a + '\n' + b + '\n</input>'
-}
-
-export function tooLong(n: number): string {
-  return `Too long: ${n} bytes, limit ${NODE}. Cut the least valuable items.`
 }

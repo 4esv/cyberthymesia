@@ -14,13 +14,13 @@ import { projectRoot, storePath } from './project.ts'
 import { parseClaude, parsePi, claudeCwd, piHeader, listClaude, listPi } from './ingest.ts'
 import type { Call } from './ingest.ts'
 import {
-  leafText, prefix, tag, mergeClip, combine, aggText, leafModel, leafPrompt, mergePrompt,
+  leafText, tag, mergeClip, combine, aggText,
 } from './leaves.ts'
 import type { ItemRow, AggMeta } from './leaves.ts'
 import { recentLines, renderBlock } from './view.ts'
 import { isDirective, toolKey, pinText, renderPins } from './pins.ts'
 import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
-import { META_OUTPUT, CYTH_TOOLS, cythTool } from './leaves.ts'
+import { CYTH_TOOLS, cythTool } from './leaves.ts'
 import { NODE, PAGE, HEADER, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
 import type { NormItem, Store, ForgetPlan } from './types.ts'
 
@@ -180,8 +180,6 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     return prev.harness === item.harness && prev.session === item.session ? null : tag(item.harness, item.session)
   }
 
-  const leafPrefix = (seq: number): string => prefix(getItem(seq).kind, leafTag(seq))
-
   // Ingest a batch of NormItems. Caller must already hold a transaction.
   const ingestItems = (items: NormItem[], autoPin = true, failPins = true): { added: number; lastSeq: number } => {
     let count = countItems()
@@ -340,14 +338,6 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       return head + `tool ${m.name}${m.isError ? ' (isError)' : ''}\ninput: ${canonical(m.input)}\noutput:\n${item.text}`
     }
     return head + item.text
-  }
-
-  const resolveNodeRef = (ref: string): { l: number; i: number } | null => {
-    let r
-    try { r = parseRef(ref) } catch { return null }
-    if ('l' in r) return { l: r.l, i: r.i }
-    if (r.offset !== 0) return null
-    return { l: 0, i: r.item }
   }
 
   // After a compaction, Claude Code writes the kept tail into the transcript again, as new
@@ -572,37 +562,6 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       return rows.map((p: any) => `[${p.id}] #${p.seq} ${p.kind}: ${clipMark(oneLine(p.reason), 200)} | ${pinText(getItem(p.seq))}`).join('\n')
     },
 
-    pending(limit) {
-      const rows = db.prepare('SELECT l, i FROM nodes WHERE source = ? AND tries < 2 ORDER BY l ASC, i DESC LIMIT ?').all('clip', limit)
-      const out: { ref: string; prompt: string }[] = []
-      for (const r of rows) {
-        const l = Number(r.l)
-        const i = Number(r.i)
-        if (l === 0) out.push({ ref: refOf(l, i), prompt: leafPrompt(getItem(i).text) })
-        else out.push({ ref: refOf(l, i), prompt: mergePrompt(nodeText(l - 1, i * 2), nodeText(l - 1, i * 2 + 1)) })
-      }
-      return out
-    },
-
-    put(ref, text) {
-      const node = resolveNodeRef(ref)
-      if (!node) return false
-      const cur = getNode(node.l, node.i)
-      if (!cur) return false
-      if (cur.source === 'det' || cur.source === 'verbatim') return false
-      const t = oneLine(text)
-      if (t === '' || bytes(t) > NODE || META_OUTPUT.test(t)) {
-        db.prepare('UPDATE nodes SET tries = tries + 1 WHERE l = ? AND i = ?').run(node.l, node.i)
-        return false
-      }
-      if (node.l === 0) {
-        db.prepare('UPDATE nodes SET text = ?, source = ? WHERE l = ? AND i = ?').run(leafModel(leafPrefix(node.i), t), 'model', node.l, node.i)
-      } else {
-        db.prepare('UPDATE nodes SET text = ?, source = ? WHERE l = ? AND i = ?').run(t, 'model', node.l, node.i)
-      }
-      return true
-    },
-
     // Remove one session's items and rebuild the tree over what is left, so
     // the log stays dense, hashed and consistent. `arg` is a session id, an
     // unambiguous session-id prefix, or a leaf tag (c1234 / p1234).
@@ -632,7 +591,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         views: (db.prepare('SELECT harness, session FROM views WHERE harness = ? AND session = ?').all(h, s) as { harness: string; session: string }[]).map((r) => ({ harness: r.harness, session: r.session })),
         cursors,
         remaining: countItems() - seqs.length,
-        resets: 'remaining items are renumbered 0..remaining-1 and the whole tree is rebuilt (model summaries re-queue as clips); every other session view and the views_log are cleared (their seqs and roots no longer hold); the session is tombstoned so a later sync cannot re-ingest it',
+        resets: 'remaining items are renumbered 0..remaining-1 and the whole tree is rebuilt (legacy model summaries become clips); every other session view and the views_log are cleared (their seqs and roots no longer hold); the session is tombstoned so a later sync cannot re-ingest it',
       }
       if (dryRun) return plan
       tx(() => {
@@ -668,27 +627,12 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       return plan
     },
 
-    forget(ref) {
-      const node = resolveNodeRef(ref)
-      if (!node) return
-      const cur = getNode(node.l, node.i)
-      if (!cur || cur.source !== 'model') return
-      if (node.l === 0) {
-        const leaf = leafText(getItem(node.i), leafTag(node.i))
-        db.prepare('UPDATE nodes SET text = ?, source = ?, tries = 0 WHERE l = ? AND i = ?').run(leaf.text, 'clip', node.l, node.i)
-      } else {
-        const text = mergeClip(nodeText(node.l - 1, node.i * 2), nodeText(node.l - 1, node.i * 2 + 1))
-        db.prepare('UPDATE nodes SET text = ?, source = ?, tries = 0 WHERE l = ? AND i = ?').run(text, 'clip', node.l, node.i)
-      }
-    },
-
     status() {
       const items = countItems()
       const nodes = Number(db.prepare('SELECT COUNT(*) AS c FROM nodes').get().c)
-      const pending = Number(db.prepare('SELECT COUNT(*) AS c FROM nodes WHERE source = ? AND tries < 2').get('clip').c)
       const pins = Number(db.prepare('SELECT COUNT(*) AS c FROM pins WHERE resolved = 0').get().c)
       const algedonic = renderPins(openPins()).over > 0
-      return { items, nodes, pending, pins, algedonic, root: mthHex(items) }
+      return { items, nodes, pins, algedonic, root: mthHex(items) }
     },
 
     verify() {

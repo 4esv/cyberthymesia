@@ -321,3 +321,17 @@ Test command: `node --test core/test/properties.test.ts core/test/store.test.ts`
 | O09 | core/src/index.ts | malformed meta does not make search throw | killed |
 | O10 | core/src/view.ts | a skipped item does not end the <recent> walk | killed |
 | O11 | core/src/view.ts | the oldest shown line (not a skipped seq) carries the tag | killed |
+
+## No summary queue: pending/put/forget and status.pending removed (2026-10-25): 4/4 killed
+The summary guards S01-S08 above (put's meta-commentary check, the prompts) and I11's
+put/forget leafTag path no longer exist. New guards, test command
+`node --test core/test/store.test.ts core/test/cli.test.ts` (mutants in core/test/mutants.pending.json).
+Also checked: a fresh copy of the real ~/.cyberthymesia/Users-axel store (2373 items, 1221
+legacy `model` nodes) opens with this code, `status` has no pending, `verify` is clean.
+
+| id | file | guard | result |
+|---|---|---|---|
+| Q01 | core/src/index.ts | status has no pending count | killed |
+| Q02 | core/bin/cyth.ts | the CLI has no pending command | killed |
+| Q03 | core/src/index.ts | the Store API has no summary queue | killed |
+| Q04 | core/src/index.ts | an old store's model nodes still verify | killed |

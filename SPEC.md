@@ -61,9 +61,12 @@ Node `source` ∈ `verbatim` | `det` | `model` | `clip`:
 **Legacy: model summaries (off).** Earlier versions had the adapters replace
 `clip` texts with one-line model summaries (`source = model`). The adapters no
 longer ask: a summarized tree in context made models answer "not in the
-history" without searching, and summaries were the dominant cost. Core keeps
-`pending`, `put` and `forget` (and their prompts and checks in `leaves.ts`) so old stores still open and
-their `model` nodes still verify; nothing in the view depends on them.
+history" without searching, and summaries were the dominant cost. Nothing asks
+for them, so core has no summary queue: `pending`, `put` and `forget`, their
+prompts and the `pending` count in `status` are gone. A `clip` node is just the
+tree's text, not queued work. Old stores still open: their `model` nodes keep
+their text (range zoom shows it), `verify` checks hashes, not sources, the
+`nodes.tries` column stays unused, and `<recent>` never reads node text (§3).
 
 ## 3. View
 
@@ -226,11 +229,8 @@ interface Store {
   zoom(ref: string): string
   search(q: string, opts?: { regex?: boolean; limit?: number }): string
   pin(ref: string, reason: string): number; unpin(id: number): void; pins(): string
-  pending(limit: number): { ref: string; prompt: string }[]  // legacy (§2): unused by adapters
-  put(ref: string, text: string): boolean            // legacy model summary, validated ≤ NODE
-  forget(ref: string): void                          // legacy
   forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan  // §8a
-  status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string }
+  status(): { items: number; nodes: number; pins: number; algedonic: boolean; root: string }
   verify(): { ok: boolean; problems: string[] }
   close(): void
 }
@@ -243,8 +243,7 @@ once; SQLite serializes them.
 CLI `core/bin/cyth.ts` (run with `node`): `status | sync-claude <file> |
 sync-pi <file> | backfill [--claude DIR] [--pi DIR] | view <harness> <session>
 | fold <harness> <session> <seq> | zoom <ref> | search <q> [--regex] | pin <ref>
-<reason> | unpin <id> | pins | pending [--limit N] | put <ref> <text> | forget
-<ref> | forget-session <id|tag> [--dry-run] | verify`. `sync-pi` takes `--one-shot`. Global `--cwd DIR` (default cwd) and `--json`. Exit ≠ 0 on error,
+<reason> | unpin <id> | pins | forget-session <id|tag> [--dry-run] | verify`. `sync-pi` takes `--one-shot`. Global `--cwd DIR` (default cwd) and `--json`. Exit ≠ 0 on error,
 message on stderr.
 
 ### 8a. `forgetSession`
@@ -266,7 +265,7 @@ calls, pins, views, cursors, remaining) and changes nothing.
 Both: **fail open.** Any error in cyberthymesia → the harness's native
 behaviour, plus a status line saying so. `CYTH_DISABLE=1` → pass-through.
 **No model calls:** neither adapter asks a model for anything (no summaries,
-no `pending`/`put`). Tools: `memory_zoom`, `memory_find`, `memory_pin`,
+and core has no summary queue). Tools: `memory_zoom`, `memory_find`, `memory_pin`,
 `memory_unpin`, `memory_pins` (thin calls into core). A core error in a tool
 reaches the model as `<tool>: <core's message>` (an error result), never a bare
 "failed". The status line shows items and pins. Both adapters have identical

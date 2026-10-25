@@ -9,7 +9,7 @@ const USAGE = `usage: cyth [--cwd DIR] [--home DIR] [--json] <command> ...
   status | sync-claude <file> | sync-pi <file> [--one-shot] | backfill [--claude DIR] [--pi DIR]
   | view <harness> <session> | fold <harness> <session> <seq> | zoom <ref>
   | search <q> [--regex] [--limit N] | roots | pin <ref> <reason> | unpin <id>
-  | pins | pending [--limit N] | put <ref> <text> | forget <ref> | forget-session <id|tag> [--dry-run] | verify`
+  | pins | forget-session <id|tag> [--dry-run] | verify`
 
 class Usage extends Error {}
 
@@ -141,21 +141,6 @@ function run(): Out {
     case 'pins': {
       arity(0, 'pins')
       return text(open().pins())
-    }
-    case 'pending': {
-      arity(0, 'pending [--limit N]')
-      const items = open().pending(int('--limit') ?? 20)
-      return { json: items, human: items.map((p) => `${p.ref} ${p.prompt}`).join('\n') }
-    }
-    case 'put': {
-      arity(2, 'put <ref> <text>')
-      const stored = open().put(rest[0], rest[1])
-      return { json: { ok: stored }, human: stored ? 'ok' : 'not stored' }
-    }
-    case 'forget': {
-      arity(1, 'forget <ref>')
-      open().forget(rest[0])
-      return done()
     }
     case 'forget-session': {
       arity(1, 'forget-session <id|tag> [--dry-run]')

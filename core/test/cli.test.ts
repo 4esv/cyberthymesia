@@ -106,14 +106,12 @@ test('pin, pins, unpin round trip', () => {
   assert.ok(!json('pins').text.includes('keep this'))
 })
 
-test('pending is a JSON array', () => {
-  assert.ok(Array.isArray(json('pending', '--limit', '5')))
-})
-
-test('put on an unknown ref is not an error', () => {
-  const r = run('--json', 'put', '#99', 'x')
-  assert.equal(r.status, 0, r.stderr)
-  assert.equal(JSON.parse(r.stdout).ok, false)
+test('the summary queue is gone: pending, put and forget are unknown commands; status has no pending', () => {
+  for (const c of [['pending'], ['put', '#0', 'x'], ['forget', '#0']]) {
+    const r = run(...c)
+    assert.notEqual(r.status, 0, `cyth ${c.join(' ')} should fail`)
+  }
+  assert.equal('pending' in json('status'), false)
 })
 
 test('verify is clean before tampering', () => {
@@ -169,7 +167,7 @@ test('--cwd selects the project regardless of the process cwd', () => {
   }
 })
 
-test('pending --limit, sync-claude and fold seq on a fresh store', () => {
+test('search --limit, sync-claude and fold seq on a fresh store', () => {
   const h = mkdtempSync(join(tmpdir(), 'cyth-cli-home2-'))
   const c = mkdtempSync(join(tmpdir(), 'cyth-cli-cwd2-'))
   const r2 = (...a: string[]) => {
@@ -197,7 +195,7 @@ test('pending --limit, sync-claude and fold seq on a fresh store', () => {
     assert.equal(v.tailStart, 2)
     assert.equal(v.viewEnd, 2)
 
-    // pending: long items leave clip leaves pending.
+    // search --limit over long items.
     const long = join(c, 'pi-long.jsonl')
     const big = (n: number) => 'word '.repeat(300) + n
     writeFileSync(
@@ -210,9 +208,6 @@ test('pending --limit, sync-claude and fold seq on a fresh store', () => {
     const count = (t: string) => (t.match(/^#\d+/gm) ?? []).length
     assert.ok(count(r2('search', 'word').text) >= 2)
     assert.equal(count(r2('search', 'word', '--limit', '1').text), 1)
-    const all = r2('pending')
-    assert.ok(all.length >= 2, `need >=2 pending, got ${all.length}`)
-    assert.equal(r2('pending', '--limit', '1').length, 1)
   } finally {
     rmSync(h, { recursive: true, force: true })
     rmSync(c, { recursive: true, force: true })

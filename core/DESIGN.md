@@ -13,7 +13,7 @@ Reuse the pure modules, do not reimplement them:
 - ingest.ts: parseClaude(file, start, lookup), parsePi(file, start, lookup), claudeCwd(file),
   piHeader(file), listClaude(dir), listPi(dir). Chunk = {items, raw, open, closed, end, bad}.
 - leaves.ts: ItemRow, leafText(item, tag|null), tag(harness, session), prefix(kind, tag),
-  leafModel(pre, summary), mergeClip(a, b), combine(a, b), aggText(meta), leafPrompt, mergePrompt.
+  mergeClip(a, b), combine(a, b), aggText(meta), CYTH_TOOLS, cythTool(name).
 - view.ts: CONTRACT, recentLines, recentBytes, renderRecent, renderBlock.
 - pins.ts: isDirective, toolKey, pinText, renderPins, PinRow.
 - merkle.ts: leafHash, nodeHash, foldRoots, mthReference, EMPTY.
@@ -132,20 +132,12 @@ Returns {added, lastSeq: count-1} (-1 when empty).
   kind 'manual'. Returns the id. unpin(id): unknown or already-resolved id throws.
 - pins(): every open pin, oldest first, `[id] #seq kind: reason | pinText`, '\n'-joined;
   'no open pins' if none.
-- status(): items, nodes (row count), pending (see below), pins (open count),
+- status(): items, nodes (row count), pins (open count),
   algedonic (renderPins over > 0), root (hex MTH(count)).
 
-## summaries (legacy, off)
-The adapters never call these. They stay so old stores open and old `model` nodes verify.
-- pending(limit): nodes with source 'clip' and tries < 2, ORDER BY l ASC, i DESC.
-  Leaf prompt = leafPrompt(item text) (the item's full text); merge = mergePrompt(childA.text,
-  childB.text) with current child texts. Returns [{ref: refOf(l,i), prompt}].
-- put(ref, text): t = oneLine(text). Reject (return false) if the ref is not a node, its
-  source is det or verbatim, t is empty, bytes(t) > NODE, or t matches META_OUTPUT (leaves.ts). On a reject of a clip/model node
-  by length or meta-commentary, increment tries. Accept: leaf → leafModel(prefix(kind, tag-or-null as at
-  build), t); merge → t. source 'model'. Returns true.
-- forget(ref): a model node goes back to its clip text (leaf: leafText again; merge: mergeClip
-  of the children's current texts), source clip, tries 0. Other sources: no-op.
+## summaries (legacy, removed)
+There is no summary queue (no pending/put/forget). Old stores keep their `model` nodes
+as plain node text; nothing reads or rewrites them, and `tries` is written 0 and never read.
 
 ## verify()
 Problems (strings) for: an item hash that does not match its recomputed hash; for every

@@ -9,7 +9,7 @@
 //  tools      memory_zoom / memory_find / memory_pin / memory_unpin / memory_pins. A core
 //             error comes back as an error result carrying core's message.
 //  no model   the view is a fixed header (pins + newest items) over search: no summaries are
-//             asked for (core's pending/put stay for old stores, unused here).
+//             asked for (core has no summary queue).
 //  fail open  any error -> the hook returns nothing (Pi's native context) + one notify.
 //             CYTH_DISABLE=1 -> nothing is registered beyond a status line.
 //
@@ -34,7 +34,7 @@ export type Store = {
 	pin(ref: string, reason: string): number;
 	unpin(id: number): void;
 	pins(): string;
-	status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string };
+	status(): { items: number; nodes: number; pins: number; algedonic: boolean; root: string };
 	close(): void;
 };
 export type Core = { openStore(cwd: string, opts?: { home?: string; session?: { harness: "pi"; session: string } }): Store };
