@@ -20,7 +20,7 @@ import type { ItemRow, AggMeta } from './leaves.ts'
 import { recentLines, renderBlock } from './view.ts'
 import { isDirective, toolKey, pinText, renderPins } from './pins.ts'
 import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
-import { META_OUTPUT } from './leaves.ts'
+import { META_OUTPUT, CYTH_TOOLS, cythTool } from './leaves.ts'
 import { NODE, PAGE, HEADER, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
 import type { NormItem, Store, ForgetPlan } from './types.ts'
 
@@ -306,10 +306,18 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   // `#n|` + the leaf line of item n, rebuilt from the item itself so it never
   // changes (a legacy model summary on the node is not used). The tag shows
   // where the session changes, and on the oldest line of the slice.
+  // The tag compares with the line above it: the previous item that is shown.
+  const ownTool = (seq: number): boolean => {
+    const it = getItem(seq)
+    return it.kind === 'tool' && it.meta !== null && cythTool(it.meta.name)
+  }
   const recentLine = (seq: number, first: boolean): string => {
     const item = getItem(seq)
-    const t = first ? tag(item.harness, item.session) : leafTag(seq)
-    return `#${seq}|` + leafText(item, t).text
+    let p = seq - 1
+    while (!first && p >= 0 && ownTool(p)) p--
+    const above = first || p < 0 ? null : getItem(p)
+    const same = above !== null && above.harness === item.harness && above.session === item.session
+    return `#${seq}|` + leafText(item, same ? null : tag(item.harness, item.session)).text
   }
 
   const ensureView = (h: string, s: string, header: number): { tailStart: number } => {
@@ -357,6 +365,10 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       return stored.get(it.harness, it.session, it.ts, it.kind, it.text) === undefined
     })
   }
+
+  // SQL: the items row is not one of cyth's own tool calls (SPEC §4). Malformed
+  // meta (tampering) counts as not ours rather than throwing from json_extract.
+  const NOT_OWN = `NOT (items.kind = 'tool' AND coalesce(json_valid(items.meta), 0) AND coalesce(json_extract(items.meta, '$.name'), '') IN (${CYTH_TOOLS.map(() => '?').join(',')}))`
 
   const store: Store = {
     root,
@@ -446,7 +458,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         persistView(h, s, tailStart, header)
       }
       const pinned = renderPins(openPins())
-      const block = renderBlock(pinned.block, recentLines(st.tailStart, header, recentLine))
+      const block = renderBlock(pinned.block, recentLines(st.tailStart, header, recentLine, ownTool))
       const viewEnd = st.tailStart
       const rootHex = mthHex(viewEnd)
       const bytess = bytes(block)
@@ -495,13 +507,15 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       return page + footer
     },
 
+    // Search leaves out cyth's own tool calls (an earlier memory_find is not a
+    // fact), at query time, so stores ingested before this need no migration.
     search(q, opts) {
       const limit = opts?.limit ?? 20
       const hits: { n: number; leaf: string; snippet: string }[] = []
       if (opts?.regex) {
         let re: RegExp
         try { re = new RegExp(q, 'i') } catch { return `no hits for ${q}` }
-        const rows = db.prepare('SELECT rowid, body FROM items_fts ORDER BY rowid DESC').all()
+        const rows = db.prepare(`SELECT items_fts.rowid AS rowid, body FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE ${NOT_OWN} ORDER BY items_fts.rowid DESC`).all(...CYTH_TOOLS)
         for (const row of rows) {
           if (hits.length >= limit) break
           const m = re.exec(row.body)
@@ -513,8 +527,8 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         }
       } else {
         const pick = (query: string) => db.prepare(
-          'SELECT rowid, snippet(items_fts, 0, \'\', \'\', \' … \', 24) AS s FROM items_fts WHERE items_fts MATCH ? ORDER BY bm25(items_fts) LIMIT ?',
-        ).all(query, limit)
+          `SELECT items_fts.rowid AS rowid, snippet(items_fts, 0, '', '', ' … ', 24) AS s FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE items_fts MATCH ? AND ${NOT_OWN} ORDER BY bm25(items_fts) LIMIT ?`,
+        ).all(query, ...CYTH_TOOLS, limit)
         let rows: any[]
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
         rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))

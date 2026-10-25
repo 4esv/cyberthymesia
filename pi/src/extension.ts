@@ -279,7 +279,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	tool("memory_zoom", "Open a memory ref: #n gives item n whole, paged (#n@offset continues); an aligned range #a-b gives its two halves.",
 		{ type: "object", properties: { ref: str("An item ref from <recent> or memory_find, e.g. #7 or #7@20000") }, required: ["ref"] },
 		(s, p) => s.zoom(String(p.ref)));
-	tool("memory_find", "Full-text search over every item of the project's history, verbatim, newest first.",
+	tool("memory_find", "Full-text search over every item of the project's history, verbatim, newest first (calls of the memory_* tools themselves are left out).",
 		{ type: "object", properties: {
 			query: str("FTS5 query, or a regex when regex=true"),
 			regex: { type: "boolean", description: "Treat query as a regular expression" },

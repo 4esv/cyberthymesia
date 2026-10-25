@@ -22,7 +22,8 @@ read the log as it is now.
   Try at least two phrasings.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
-- memory_find(query): full-text search over every item, newest first.
+- memory_find(query): full-text search over every item, newest first. Calls of
+  these memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
@@ -35,19 +36,23 @@ read the log as it is now.
 export type LineOf = (seq: number, first: boolean) => string
 
 // The newest lines before `end`, newest last, whole lines only, while their
-// bytes (each line plus its '\n') stay <= budget. Stops at the first line that
-// does not fit, so the slice is contiguous. The oldest line carries its tag.
-export function recentLines(end: number, budget: number, lineOf: LineOf): string[] {
+// bytes (each line plus its '\n') stay <= budget. Items `skip` names (cyth's
+// own tool calls) are not shown. Stops at the first line that does not fit, so
+// the slice is contiguous over the shown items. The oldest line carries its tag.
+export function recentLines(end: number, budget: number, lineOf: LineOf, skip: (seq: number) => boolean = () => false): string[] {
   const out: string[] = []
   let used = 0
+  let oldest = -1
   for (let seq = end - 1; seq >= 0; seq--) {
+    if (skip(seq)) continue
     const forced = lineOf(seq, true)
     if (used + bytes(forced) + 1 > budget) break
     const natural = lineOf(seq, false)
     out.push(natural)
     used += bytes(natural) + 1
+    oldest = seq
   }
-  if (out.length > 0) out[out.length - 1] = lineOf(end - out.length, true)
+  if (out.length > 0) out[out.length - 1] = lineOf(oldest, true)
   return out.reverse()
 }
 

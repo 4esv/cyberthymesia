@@ -304,3 +304,20 @@ boundary case was added to P2 and H01 was re-swept killed.
 | CH2 | claude-code/hooks/register.ts | a tool error is not a bare 'failed' | killed |
 | CH3 | claude-code/hooks/register.ts | status line has no summary backlog | killed |
 | CH4 | claude-code/hooks/register.ts | no summaries: a turn never drains pending | killed |
+
+## Search and <recent> leave out cyth's own tool calls (2026-10-25): 11/11 killed
+Test command: `node --test core/test/properties.test.ts core/test/store.test.ts` (mutants in core/test/mutants.own.json).
+
+| id | file | guard | result |
+|---|---|---|---|
+| O01 | core/src/index.ts | FTS search leaves out cyth's own tool calls | killed |
+| O02 | core/src/index.ts | regex search leaves out cyth's own tool calls | killed |
+| O03 | core/src/index.ts | <recent> leaves out cyth's own tool calls | killed |
+| O04 | core/src/index.ts | <recent> tag compares with the line above, not a skipped call | killed |
+| O05 | core/src/leaves.ts | Claude Code spelling (mcp__cyberthymesia__memory_*) is cyth's own | killed |
+| O06 | core/src/leaves.ts | Pi spelling (bare memory_*) is cyth's own | killed |
+| O07 | core/src/leaves.ts | memory_pin / memory_unpin / memory_pins calls are cyth's own | killed |
+| O08 | core/src/leaves.ts | exact names only: a lookalike tool (memory_find_v2) is not cyth's | killed |
+| O09 | core/src/index.ts | malformed meta does not make search throw | killed |
+| O10 | core/src/view.ts | a skipped item does not end the <recent> walk | killed |
+| O11 | core/src/view.ts | the oldest shown line (not a skipped seq) carries the tag | killed |

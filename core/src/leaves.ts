@@ -142,6 +142,16 @@ function tailLine(output: string, ok: boolean): string {
   return ls[ls.length - 1]
 }
 
+// cyberthymesia's own memory tools, in both harness spellings (Pi `memory_find`,
+// Claude Code `mcp__cyberthymesia__memory_find`). Their calls stay in the log,
+// but search and <recent> leave them out: an earlier query is not a fact (SPEC §4).
+export const CYTH_TOOLS: readonly string[] = ['memory_find', 'memory_zoom', 'memory_pin', 'memory_unpin', 'memory_pins']
+  .flatMap((n) => [n, 'mcp__cyberthymesia__' + n])
+
+export function cythTool(name: string): boolean {
+  return CYTH_TOOLS.includes(name)
+}
+
 export function tag(harness: Harness, session: string): string {
   const alnum = session.match(/[a-zA-Z0-9]/g) ?? []
   return (harness === 'claude' ? 'c' : 'p') + alnum.slice(-4).join('')

@@ -86,8 +86,11 @@ Returns {added, lastSeq: count-1} (-1 when empty).
   0, count). If the row exists, opts.tailStart is ignored (only fold moves it).
   Render: block = CONTRACT + '\n\n' + pinnedBlock + '<recent>\n' + lines + '</recent>\n', where
   pinnedBlock = renderPins(open pins oldest first, text = pinText(item)).block and lines =
-  recentLines(tailStart, header, recentLine). recentLine(seq, first) = `#seq|` +
-  leafText(item, first ? tag(item) : leafTag(seq)).text, rebuilt from the item (never the
+  recentLines(tailStart, header, recentLine, ownTool). ownTool(seq) = a tool item whose
+  meta.name is in CYTH_TOOLS (leaves.ts: memory_find/zoom/pin/unpin/pins, bare and
+  mcp__cyberthymesia__-prefixed); those seqs are skipped. recentLine(seq, first) = `#seq|` +
+  leafText(item, tag unless the previous non-ownTool item has the same harness and session,
+  or always when first).text, rebuilt from the item (never the
   node text, so a legacy model summary never shows and the line can never change).
   recentLines walks seq = tailStart-1 down, adds a line while the total (line + '\n' each,
   the oldest counted with its forced tag) stays <= header, stops at the first that does not
@@ -116,6 +119,9 @@ Returns {added, lastSeq: count-1} (-1 when empty).
   items qualify; the hits are then re-sorted newest first (seq/rowid descending) before
   output.
 - regex: new RegExp(q, 'i'), scan items newest first over the fts body, up to limit hits.
+- Both join items_fts to items on seq = rowid and drop ownTool rows in SQL (NOT_OWN:
+  kind 'tool', json_valid(meta), json_extract(meta, '$.name') IN CYTH_TOOLS), so `limit`
+  counts only rows that are shown. Query time, no ingest flag: old stores need no migration.
 - Each hit: `#n|<leaf (0,n) current text>` then `\n  ` + a one-line snippet (~120 bytes around
   the match; fts5 snippet() is fine for FTS). Output capped at PAGE bytes (stop adding hits).
   No hits → `no hits for ${q}`.

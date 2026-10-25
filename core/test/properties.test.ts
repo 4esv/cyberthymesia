@@ -76,7 +76,8 @@ function size(r: Rng): number {
 
 const CMDS = ['npm test', 'make build', 'git status', 'node app.js']
 const FILES = ['/src/a.ts', '/src/b.ts', '/lib/c.py', '/README.md']
-const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'Agent', 'Custom']
+// The last two are cyth's own tools (both spellings): logged, never shown in <recent>.
+const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'Agent', 'Custom', 'memory_find', 'mcp__cyberthymesia__memory_zoom']
 
 function toolInput(r: Rng, name: string): unknown {
   switch (name) {
@@ -184,9 +185,16 @@ const rowOf = (it: NormItem, seq: number): ItemRow => ({ seq, harness: it.harnes
 
 // The exact line SPEC §3 asks for item `seq` of the stream: `#n|` + its leaf
 // line, tagged where the session changes, and always on the oldest line.
+const own = (it: NormItem): boolean => it.kind === 'tool' && /^(mcp__cyberthymesia__)?memory_(find|zoom|pin|unpin|pins)$/.test(it.tool?.name ?? '')
+
+// The shown items before `end` (cyth's own tool calls are not shown), oldest first.
+const shownBefore = (items: NormItem[], end: number): number[] => items.slice(0, end).flatMap((it, k) => (own(it) ? [] : [k]))
+
 function expectedLine(items: NormItem[], seq: number, first: boolean): string {
   const it = items[seq]
-  const prev = seq > 0 ? items[seq - 1] : undefined
+  let p = seq - 1
+  while (p >= 0 && own(items[p])) p--
+  const prev = p >= 0 ? items[p] : undefined
   const changes = !prev || prev.harness !== it.harness || prev.session !== it.session
   return `#${seq}|` + leafText(rowOf(it, seq), first || changes ? tag(it.harness, it.session) : null).text
 }
@@ -200,13 +208,14 @@ function assertRecent(items: NormItem[], v: { block: string; tailStart: number; 
   assert.equal(v.viewEnd, v.tailStart, 'viewEnd is tailStart')
   const rs = recentOf(v.block)
   assert.ok(recentB(rs) <= header, `<recent> ${recentB(rs)} > HEADER ${header}`)
+  const shown = shownBefore(items, v.tailStart)
   rs.forEach((x, k) => {
     assert.ok(x.seq < v.tailStart, `#${x.seq} is at or after tailStart ${v.tailStart}`)
-    assert.equal(x.seq, v.tailStart - rs.length + k, 'newest last, contiguous, ending at tailStart - 1')
+    assert.equal(x.seq, shown[shown.length - rs.length + k], 'newest last, contiguous over shown items, ending at the last before tailStart')
     assert.equal(x.line, expectedLine(items, x.seq, k === 0), `#${x.seq} is its whole leaf line`)
   })
-  if (rs.length < v.tailStart) {
-    const next = v.tailStart - rs.length - 1
+  if (rs.length < shown.length) {
+    const next = shown[shown.length - rs.length - 1]
     const grown = rs.length === 0 ? 0 : recentB(rs) - bytes(rs[0].line) + bytes(expectedLine(items, rs[0].seq, false))
     assert.ok(grown + bytes(expectedLine(items, next, true)) + 1 > header, `#${next} would have fit`)
   }
@@ -258,17 +267,21 @@ test('P1 <recent> is whole leaf lines, newest last, never at or after tailStart 
     }
     const end = r.int(0, 300)
     const budget = r.int(1, 20000)
-    const out = recentLines(end, budget, lineOf)
+    const skipped = new Set(Array.from({ length: end }, (_, k) => k).filter(() => r.chance(0.2)))
+    const kept = Array.from({ length: end }, (_, k) => k).filter((k) => !skipped.has(k))
+    const out = recentLines(end, budget, lineOf, (seq) => skipped.has(seq))
     out.forEach((l, k) => {
-      const seq = end - out.length + k
+      const seq = kept[kept.length - out.length + k]
       assert.equal(l, lineOf(seq, k === 0), `line ${k} is #${seq} whole`)
     })
   })
   each(seeds(20), (seed, r) => drive(seed, r, r.pick([1024, 4096, 8192]), (items, v) => {
     const rs = recentOf(v.block)
+    const shown = shownBefore(items, v.tailStart)
     rs.forEach((x, k) => {
       assert.ok(x.seq < v.tailStart)
-      assert.equal(x.seq, v.tailStart - rs.length + k)
+      assert.ok(!own(items[x.seq]), `#${x.seq} is cyth's own tool call`)
+      assert.equal(x.seq, shown[shown.length - rs.length + k])
       assert.equal(x.line, expectedLine(items, x.seq, k === 0))
     })
   }))
@@ -322,7 +335,10 @@ test('P2b the block is unchanged between folds while only the tail grows', () =>
       const before = s.view(p.harness, p.session, { header })
       s.fold(p.harness, p.session, before.tailStart + 1)
       const after = s.view(p.harness, p.session, { header })
-      assert.ok(after.block !== before.block, 'a fold that moves tailStart changes <recent>')
+      // Folding over one of cyth's own tool calls shows nothing new; over any other item it does.
+      const crossed = [...items.slice(0, first), ...tail][before.tailStart]
+      if (own(crossed)) assert.ok(after.block === before.block, 'folding over an own tool call leaves <recent> as it was')
+      else assert.ok(after.block !== before.block, 'a fold that moves tailStart changes <recent>')
     })
   })
 })

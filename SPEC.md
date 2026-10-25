@@ -76,10 +76,11 @@ bytes stay stable between folds (prompt cache).
      is told about `<recent>` exactly when `<recent>` is in its context;
   2. the `<pinned>` block (§5), which changes only when pins change;
   3. `<recent>`, one line per item, then `</recent>`. The lines are the newest
-     items before `tailStart`, from any session, newest last. A line is
+     items before `tailStart`, from any session, newest last, leaving out
+     cyth's own tool calls (§4). A line is
      `#n|` + the item's leaf text (§2), rebuilt from the item itself (a legacy
      model summary is not used). The tag `@c1234` / `@p1234` appears where the
-     session changes from the item before, and always on the oldest line shown.
+     session changes from the line above it, and always on the oldest line shown.
      Lines are added newest first while their bytes (each line plus its `\n`)
      stay ≤ `HEADER`, whole lines only; the first line that does not fit stops
      the walk, so the slice is contiguous and ends at `tailStart − 1`;
@@ -115,6 +116,15 @@ bytes stay stable between folds (prompt cache).
 - `search(q, {regex?, limit=20})` → `#n|leaf text` + a snippet per hit.
   Default FTS5: bm25 picks the best `limit` hits, which are then listed newest
   first (by `seq`, descending); `regex` scans newest first, capped by PAGE.
+- **Own calls are not hits.** A tool item of cyth's own tools (`memory_find`,
+  `memory_zoom`, `memory_pin`, `memory_unpin`, `memory_pins`, in both
+  spellings: Pi's bare name and Claude Code's `mcp__cyberthymesia__<name>`)
+  stays in the log (hash, Merkle tree, `verify`, `zoom('#n')` unchanged) but
+  is left out of `search` (FTS and regex, before `limit` applies) and of
+  `<recent>`. Otherwise every query's output, which quotes earlier hits, comes
+  back as a hit of the next query and crowds out the facts. The filter is at
+  query time (a join on `items.meta.name`), so stores ingested before it need
+  no migration.
 - `roots()` → the tree's roots, for orientation (not shown to the model).
 
 ## 5. Algedonic channel (pins)
@@ -185,7 +195,8 @@ read the log as it is now.
   Try at least two phrasings.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
-- memory_find(query): full-text search over every item, newest first.
+- memory_find(query): full-text search over every item, newest first. Calls of
+  these memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.

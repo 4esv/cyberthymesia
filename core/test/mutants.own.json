@@ -1,0 +1,13 @@
+[
+  { "id": "O01", "file": "core/src/index.ts", "find": "WHERE items_fts MATCH ? AND ${NOT_OWN} ORDER BY", "replace": "WHERE items_fts MATCH ? AND (1 OR ${NOT_OWN}) ORDER BY", "guard": "FTS search leaves out cyth's own tool calls" },
+  { "id": "O02", "file": "core/src/index.ts", "find": "WHERE ${NOT_OWN} ORDER BY items_fts.rowid DESC", "replace": "WHERE (1 OR ${NOT_OWN}) ORDER BY items_fts.rowid DESC", "guard": "regex search leaves out cyth's own tool calls" },
+  { "id": "O03", "file": "core/src/index.ts", "find": "recentLines(st.tailStart, header, recentLine, ownTool)", "replace": "recentLines(st.tailStart, header, recentLine)", "guard": "<recent> leaves out cyth's own tool calls" },
+  { "id": "O04", "file": "core/src/index.ts", "find": "while (!first && p >= 0 && ownTool(p)) p--", "replace": "", "guard": "<recent> tag compares with the line above, not a skipped call" },
+  { "id": "O05", "file": "core/src/leaves.ts", "find": ".flatMap((n) => [n, 'mcp__cyberthymesia__' + n])", "replace": ".flatMap((n) => [n])", "guard": "Claude Code spelling (mcp__cyberthymesia__memory_*) is cyth's own" },
+  { "id": "O06", "file": "core/src/leaves.ts", "find": ".flatMap((n) => [n, 'mcp__cyberthymesia__' + n])", "replace": ".flatMap((n) => ['mcp__cyberthymesia__' + n])", "guard": "Pi spelling (bare memory_*) is cyth's own" },
+  { "id": "O07", "file": "core/src/leaves.ts", "find": "['memory_find', 'memory_zoom', 'memory_pin', 'memory_unpin', 'memory_pins']", "replace": "['memory_find', 'memory_zoom']", "guard": "memory_pin / memory_unpin / memory_pins calls are cyth's own" },
+  { "id": "O08", "file": "core/src/leaves.ts", "find": "return CYTH_TOOLS.includes(name)", "replace": "return CYTH_TOOLS.some((t) => name.startsWith(t))", "guard": "exact names only: a lookalike tool (memory_find_v2) is not cyth's" },
+  { "id": "O09", "file": "core/src/index.ts", "find": "coalesce(json_valid(items.meta), 0) AND ", "replace": "", "guard": "malformed meta does not make search throw" },
+  { "id": "O10", "file": "core/src/view.ts", "find": "    if (skip(seq)) continue\n", "replace": "    if (skip(seq)) break\n", "guard": "a skipped item does not end the <recent> walk" },
+  { "id": "O11", "file": "core/src/view.ts", "find": "out[out.length - 1] = lineOf(oldest, true)", "replace": "out[out.length - 1] = lineOf(end - out.length, true)", "guard": "the oldest shown line (not a skipped seq) carries the tag" }
+]

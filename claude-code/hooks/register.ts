@@ -235,7 +235,7 @@ const TOOLS = [
   },
   {
     name: 'memory_find',
-    description: "Full-text search over every item of the project's history, verbatim, newest first.",
+    description: "Full-text search over every item of the project's history, verbatim, newest first (calls of the memory_* tools themselves are left out).",
     inputSchema: {
       type: 'object',
       properties: { query: { type: 'string' }, regex: { type: 'boolean', description: 'treat query as a regex' } },

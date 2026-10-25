@@ -479,6 +479,35 @@ test('search: FTS output is newest first even when bm25 favours an old item', ()
   for (let k = 1; k < refs.length; k++) assert.ok(refs[k - 1] > refs[k], `refs strictly descending: ${refs.join(',')}`)
 })
 
+test("search and <recent> leave out cyth's own tool calls; the log keeps them", () => {
+  const { s, db } = mk()
+  const fact = user('The staging port moved to 8443 for the deploy box.', 'sess1', 'f0')
+  const q = { query: 'staging port deploy' }
+  const echo = '#0|u: The staging port moved to 8443 for the deploy box.\n  staging port moved to 8443 deploy'
+  const calls: NormItem[] = []
+  for (let k = 0; k < 24; k++) {
+    const name = ['mcp__cyberthymesia__memory_find', 'memory_find', 'mcp__cyberthymesia__memory_zoom', 'memory_pins', 'memory_pin', 'mcp__cyberthymesia__memory_unpin'][k % 6]
+    calls.push({ ...tool(name, q, echo + ' staging port '.repeat(k % 3 + 1), false, 'sess1', 'mf' + k), ...(k % 2 === 1 ? { harness: 'pi' as const, session: 'pi1' } : {}) })
+  }
+  const other = tool('Bash', { command: 'grep staging port deploy.conf' }, 'port 8443', false, 'sess1', 'b0')
+  const lookalike = tool('memory_find_v2', q, 'staging port deploy', false, 'sess1', 'lk0')
+  s.ingest([fact, ...calls, other, lookalike])
+  assert.equal(s.status().items, 27, 'every call is logged')
+  const refs = (out: string): number[] => out.split('\n').filter((l) => l.startsWith('#')).map((l) => Number(/^#(\d+)\|/.exec(l)![1]))
+  assert.deepEqual(refs(s.search('staging port deploy')), [26, 25, 0], 'FTS: the fact and other tools, no cyth calls')
+  assert.deepEqual(refs(s.search('staging port', { regex: true })), [26, 25, 0], 'regex: the same')
+  assert.deepEqual(refs(s.search('8443', { limit: 2 })), [25, 0], 'the limit counts only what is shown')
+  assert.match(s.zoom('#1'), /tool mcp__cyberthymesia__memory_find/, 'zoom on a call still opens it')
+  const recent = s.view('claude', 'fresh', { tailStart: 27 }).block.split('<recent>\n')[1]
+  assert.deepEqual(refs(recent), [0, 25, 26], '<recent> skips the calls')
+  assert.match(recent, /^#0\|u:@c/, 'oldest line tagged')
+  assert.match(recent, /\n#25\|t:Bash /, 'no tag: the line above (#0) is the same session')
+  assert.deepEqual(s.verify(), { ok: true, problems: [] })
+  // A tool row whose meta is not JSON (tampering) is searched as an ordinary row, not an error.
+  db().prepare("UPDATE items SET meta = '{bad' WHERE seq = 1").run()
+  assert.deepEqual(refs(s.search('staging port deploy')), [26, 25, 1, 0])
+})
+
 test('pin / unpin validation and listings', () => {
   const { s } = mk()
   s.ingest([user('one', 'sess1', 'p0'), user('two', 'sess1', 'p1')])
