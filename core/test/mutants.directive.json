@@ -1,0 +1,135 @@
+[
+ {
+  "id": "R01",
+  "file": "core/src/pins.ts",
+  "find": "  new RegExp(`^(?:(?:please|and|also|so|but|just|ok|okay)[,]?\\\\s+)*${SO}\\\\s+(?!${NOT_VERB})[a-z]+\\\\b`, 'i'),",
+  "replace": "  /$^/,",
+  "guard": "an imperative (sentence-initial always/never + verb) is a standing order"
+ },
+ {
+  "id": "R02",
+  "file": "core/src/pins.ts",
+  "find": "(?!${NOT_VERB})",
+  "replace": "",
+  "guard": "a sentence-initial always/never before a non-verb is not an imperative"
+ },
+ {
+  "id": "R03",
+  "file": "core/src/pins.ts",
+  "find": "|[a-z]+(?:ing|ed)\\\\b\"",
+  "replace": "\"",
+  "guard": "a sentence-initial always/never before an -ing/-ed word is not an imperative"
+ },
+ {
+  "id": "R04",
+  "file": "core/src/pins.ts",
+  "find": "new RegExp(`^(?:(?:please|and|also|so|but|just|ok|okay)",
+  "replace": "new RegExp(`(?:(?:please|and|also|so|but|just|ok|okay)",
+  "guard": "the imperative is anchored at sentence start (\"Love how you never give up\" narrates)"
+ },
+ {
+  "id": "R05",
+  "file": "core/src/pins.ts",
+  "find": "  /\\bplease\\s+(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "please always/never is a standing order"
+ },
+ {
+  "id": "R06",
+  "file": "core/src/pins.ts",
+  "find": "  new RegExp(`^(?!.*\\\\b(?:I|he|she|they|it)(?:${SELF})\\\\b).*\\\\b(?:from now on|going forward|from here on)\\\\b`, 'i'),",
+  "replace": "  /$^/,",
+  "guard": "an order with from now on / going forward is a standing order"
+ },
+ {
+  "id": "R07",
+  "file": "core/src/pins.ts",
+  "find": "^(?!.*\\\\b(?:I|he|she|they|it)(?:${SELF})\\\\b).*",
+  "replace": "^.*",
+  "guard": "the speaker's own plan with from now on is not an order"
+ },
+ {
+  "id": "R08",
+  "file": "core/src/pins.ts",
+  "find": "(?:I|he|she|they|it)(?:${SELF})",
+  "replace": "(?:I)(?:${SELF})",
+  "guard": "someone else's plan with from now on is not an order"
+ },
+ {
+  "id": "R09",
+  "file": "core/src/pins.ts",
+  "find": "  /\\b(?:you|we)\\s+(?:should|must|need to|have to|are to)\\s+(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "you/we must always/never is a standing order"
+ },
+ {
+  "id": "R10",
+  "file": "core/src/pins.ts",
+  "find": "  /\\bmake sure (?:that )?(?:you|we|to)\\s+(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "make sure you always/never is a standing order"
+ },
+ {
+  "id": "R11",
+  "file": "core/src/pins.ts",
+  "find": "  /\\bwant you to\\s+(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "I want you to always/never is a standing order"
+ },
+ {
+  "id": "R12",
+  "file": "core/src/pins.ts",
+  "find": "  /\\blet['\\u2019]?s\\s+(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "let's always/never is a standing order"
+ },
+ {
+  "id": "R13",
+  "file": "core/src/pins.ts",
+  "find": "  /\\b(?:I|we)\\s+(?:almost\\s+)?(?:always|never|don['\\u2019]t ever|do not ever)\\s+(?:want|prefer)\\b/i,",
+  "replace": "",
+  "guard": "I/we always/never want/prefer is a standing order (live pin #10: I never want)"
+ },
+ {
+  "id": "R14",
+  "file": "core/src/pins.ts",
+  "find": "|don['\\u2019]t ever|do not ever)\\s+(?:want|prefer)",
+  "replace": ")\\s+(?:want|prefer)",
+  "guard": "I don't ever want is a standing order"
+ },
+ {
+  "id": "R15",
+  "file": "core/src/pins.ts",
+  "find": "  /\\bour (?:standard|rule|convention|policy|default)s?\\s+(?:is|are)\\b/i,",
+  "replace": "",
+  "guard": "our standard/rule is is a standing order"
+ },
+ {
+  "id": "R16",
+  "file": "core/src/pins.ts",
+  "find": "  /\\bwe(?:['\\u2019]re| are)\\s+(?:trying|aiming|going)\\s+to\\b[^.!?\\n]*\\b(?:always|never)\\b/i,",
+  "replace": "",
+  "guard": "we are trying to ... never (live pin #137) is a standing order"
+ },
+ {
+  "id": "R17",
+  "file": "core/src/pins.ts",
+  "find": "STANDING.some((re) => re.test(s))",
+  "replace": "/\\b(always|never|from now on|don't ever|do not ever|remember that|every time)\\b/i.test(s)",
+  "guard": "the old word-anywhere test is gone (LoCoMo narration pinned)"
+ },
+ {
+  "id": "R18",
+  "file": "core/src/pins.ts",
+  "find": "|don['\\u2019]t ever|do not ever)\"",
+  "replace": ")\"",
+  "guard": "don't ever / do not ever opens an imperative"
+ },
+ {
+  "id": "R19",
+  "file": "core/src/pins.ts",
+  "find": "!s.endsWith('?') && STANDING",
+  "replace": "STANDING",
+  "guard": "a question is not an order"
+ }
+]

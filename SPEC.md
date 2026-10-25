@@ -137,9 +137,38 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
 
 - Auto-pin at ingest (heuristics, can only ADD):
   - `directive`: a `user` item ≤ 1000 chars with a sentence (split after
-    `.` `!` `?` or a line break) that matches the standing-order words
-    `/\b(always|never|from now on|don't ever|do not ever|remember that|every time)\b/i`
-    (whole words) and does not end in `?`. Quoted spans (`"…"`, `“…”`, `'…'`) and
+    `.` `!` `?` or a line break), not ending in `?`, that is a standing order
+    addressed to the assistant, one of these constructions (`STANDING` in
+    `pins.ts`, case-insensitive):
+    - an imperative: the sentence starts (after `please`/`and`/`also`/`so`/
+      `but`/`just`/`ok`) with `always`, `never`, `don't ever` or `do not ever`
+      and then a verb (not a listed non-verb like `been`, `good`, `here`, `by`,
+      `love`, and not an `-ing`/`-ed` word): "Always rebase", not "Always
+      good to hear" or "Never heard of it";
+    - `please always|never` anywhere;
+    - `from now on`, `going forward`, `from here on`, unless the sentence has a
+      clause stating someone's own plan (`I'll`, `I will`, `he/she/they will`,
+      `I'm going to`, `I hope`): "From now on, use tabs", not "I'll recycle
+      from now on";
+    - `you|we should|must|need to|have to|are to always|never`, `make sure
+      (that) you|we|to always|never`, `want you to always|never`, `let's
+      always|never`;
+    - `I|we (almost) always|never|don't ever want|prefer` ("I never want to
+      submit a report I can't repro");
+    - `our standard|rule|convention|policy|default(s) is|are`;
+    - `we're|we are trying|aiming|going to … always|never` (one sentence).
+
+    A standing-order word on its own is not enough: "I've always just stayed
+    away" and "I'm always down to give movie recommendations" narrate.
+    Measured (2026-10-25) against the old word-anywhere rule: LoCoMo
+    speaker turns (2,955, none an order) 184 pins → 4; LongMemEval-S user
+    turns (93,931) 2,243 → 29, precision ≈ 0.05 (sample) → 0.76; the author's own
+    messages (105 labelled in the live stores + 628 from older Claude Code
+    history) precision 0.86 → 1.00 and 0.57 → 0.82. Recall drops where a
+    rule is phrased as plain description ("the language is always that of
+    pixels"); such an item is pinned with `memory_pin`. The patterns were
+    tuned on these same sets, so the numbers are not held out.
+    Quoted spans (`"…"`, `“…”`, `'…'`) and
     code (`` `…` ``, fenced blocks) are removed first: a word inside them is
     being talked about, not given. Never a directive: a task request or question
     without such words, a user item with an `agent` (a subagent's prompt, not a

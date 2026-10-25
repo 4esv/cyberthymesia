@@ -150,15 +150,26 @@ test('failure pin: never during backfill, but backfill success still resolves', 
   assert.equal(s.pins(), 'no open pins')
 })
 
-test('isDirective: only explicit standing-order language in a real human message pins', () => {
+test('isDirective: only a standing order addressed to the assistant pins, not a standing-order word', () => {
   const { s } = mk()
   const directives = [
+    // the two real pins in the live store (#10, #137): they must keep pinning
     "I never want to submit a report I can't repro and submit to the standards I'd want from a report I'd receive.",
+    'The vault is reference for us both, durable facts. We are trying to leave things better or as good as they were, definitely never worse.',
     'From now on, use tabs',
+    'going forward please be more decisive and concise',
     "don't ever push to main",
-    'Remember that the vault stays out of git.',
-    'Run the tests every time you edit core.',
     'Always rebase.',
+    'Please, never print env vars.',
+    'please never delete the prod db',
+    'You must always ask before you answer.',
+    'make sure you never touch the live store',
+    'I want you to always reply in French.',
+    "let's never use my voice clone again.",
+    'I almost always prefer to monitor than to poll.',
+    "I don't ever want a force-push on main.",
+    'Run the suite and please never skip the hooks.',
+    'Raise to 36, our standard is always based on the outlier.',
   ]
   const notDirectives = [
     "Why don't we make pi name things properly? does pi care?",
@@ -169,12 +180,34 @@ test('isDirective: only explicit standing-order language in a real human message
     'I must stop and think; you should not do this.',
     'He said "never push to main" and left.',
     'Run `git push --always` please.',
-    'Print:\n```\nalways\n```',
+    'Print:\n```\nAlways rebase.\n```',
+    'Explain the clause "you must always notify the landlord" in plain words.',
+    'Grep the docs for `from now on` and count the hits.',
+    // narration and small talk (LoCoMo turns that pinned before)
+    "Joanna: Anytime! I'm always down to give movie reccomendations.",
+    "I've been scared of the ocean, so I've always just stayed away.",
+    "I'm always here for you, Mel!",
+    'Nice one, Gina! Love how you never give up.',
+    "Thanks, Melanie! It's like a nudge to always stay true to myself.",
+    'Always good to hear! See you later!',
+    'Always been interested in different cultures and countries.',
+    'Never heard of it, but it sounds interesting.',
+    'Never saw this coming.',
+    'Always by your side!',
+    'Always rooting for you.',
+    'From now on, should I use tabs?',
+    // the speaker's own plans and other people's, and task-local asides: not orders
+    "I'll definitely be more mindful of my foot health from now on.",
+    "I'm going to start using reusable bags from now on.",
+    'He will use the new box and sheet from now on.',
+    'Every time we rekindle the relationship, we end up fighting.',
+    'Remember that the target persona is a homeowner.',
+    "I've always wanted a site that blends text and UI.",
   ]
   s.ingest(directives.map((text, k) => user(text, 'sess1', 'd' + k)))
   assert.equal(s.status().pins, directives.length)
   s.ingest(notDirectives.map((text, k) => user(text, 'sess1', 'n' + k)))
-  assert.equal(s.status().pins, directives.length)
+  assert.equal(s.status().pins, directives.length, s.pins())
 })
 
 test('isDirective: never from a one-shot run or a subagent prompt', () => {
@@ -632,7 +665,7 @@ test('forgetSession: dry run lists exactly what goes and changes nothing; real r
     user('Always answer in French.', 'gone9xyz', 'g0'),
     tool('Bash', { command: 'echo gone' }, 'gone out', false, 'gone9xyz', 'g1'),
     asst('keep two', 'keep1', 'a1'),
-    user('keep three never push', 'keep1', 'a2'),
+    user('keep three. Never push', 'keep1', 'a2'),
     tool('Bash', { command: 'false' }, 'Exit code 1\nboom', true, 'keep1', 'a3'),
   ])
   const pk = s.pin('#2', 'mine')

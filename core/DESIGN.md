@@ -62,10 +62,14 @@ same key (backfill and subagent items still resolve, never create). Heuristics n
   nonzero number (a leading "Exit code N", or a trailing "Command exited with code N" line).
   The output text alone never marks a tool ERR — a successful `grep` whose output prints
   "... publish attempt failed" stays ok. tailLine still chooses which line the digest shows.
-- isDirective(item, oneShot): SPEC §5. Only explicit standing-order words
-  (always|never|from now on|don't ever|do not ever|remember that|every time), on a sentence
-  that does not end in "?", after quotes and code are removed; never for a one-shot run
-  (NormItem.oneShot) or an item with an agent.
+- isDirective(item, oneShot): SPEC §5. A sentence (not ending in "?", quotes and code
+  removed) that matches one of STANDING (pins.ts): a sentence-initial imperative
+  always/never/don't ever + a word not in NOT_VERB and not -ing/-ed; please always/never;
+  from now on / going forward / from here on with no "I'll / he will / I'm going to / I hope"
+  clause (SELF); you|we should|must|need to|have to always|never; make sure you always|never;
+  want you to always|never; let's always|never; I|we (almost) always|never|don't ever
+  want|prefer; our standard|rule|convention|policy|default is; we're trying|aiming|going to …
+  always|never. Never for a one-shot run (NormItem.oneShot) or an item with an agent.
 Returns {added, lastSeq: count-1} (-1 when empty).
 
 ## sync / backfill

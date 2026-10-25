@@ -335,3 +335,39 @@ legacy `model` nodes) opens with this code, `status` has no pending, `verify` is
 | Q02 | core/bin/cyth.ts | the CLI has no pending command | killed |
 | Q03 | core/src/index.ts | the Store API has no summary queue | killed |
 | Q04 | core/src/index.ts | an old store's model nodes still verify | killed |
+
+## Directive pins: standing orders, not standing-order words (2026-10-25): 19/19 + 9/9 killed
+The old word-anywhere guards D03, D04, D08 (old find), D09 ("every time") no longer exist;
+"remember that" and "every time" are no longer patterns (task-local asides and narration in
+the measured sets). Test command `node --test core/test/store.test.ts core/test/cli.test.ts`
+(new mutants in core/test/mutants.directive.json). First sweep: R03, R05, R14, R19 survived
+(no -ing example, "please never" always also sentence-initial, a redundant "I never want"
+pattern, no question that would otherwise match); the redundant pattern was merged into
+R13's, the tests gained those cases, and all were re-swept killed. The still-applicable
+old mutants D01, D02, D05-D07, D10-D13 were re-swept against the new tests: D05-D07 first
+survived (no quoted or code example matched a new pattern), examples were added, 9/9 killed.
+
+| id | file | guard | result |
+|---|---|---|---|
+| R01 | core/src/pins.ts | an imperative (sentence-initial always/never + verb) is a standing order | killed |
+| R02 | core/src/pins.ts | a sentence-initial always/never before a non-verb is not an imperative | killed |
+| R03 | core/src/pins.ts | a sentence-initial always/never before an -ing/-ed word is not an imperative | killed (after adding the case) |
+| R04 | core/src/pins.ts | the imperative is anchored at sentence start ("Love how you never give up" narrates) | killed |
+| R05 | core/src/pins.ts | please always/never is a standing order | killed (after adding the case) |
+| R06 | core/src/pins.ts | an order with from now on / going forward is a standing order | killed |
+| R07 | core/src/pins.ts | the speaker's own plan with from now on is not an order | killed |
+| R08 | core/src/pins.ts | someone else's plan with from now on is not an order | killed |
+| R09 | core/src/pins.ts | you/we must always/never is a standing order | killed |
+| R10 | core/src/pins.ts | make sure you always/never is a standing order | killed |
+| R11 | core/src/pins.ts | I want you to always/never is a standing order | killed |
+| R12 | core/src/pins.ts | let's always/never is a standing order | killed |
+| R13 | core/src/pins.ts | I/we always/never want/prefer is a standing order (live pin #10: I never want) | killed |
+| R14 | core/src/pins.ts | I don't ever want is a standing order | killed (after merging the redundant pattern) |
+| R15 | core/src/pins.ts | our standard/rule is is a standing order | killed |
+| R16 | core/src/pins.ts | we are trying to ... never (live pin #137) is a standing order | killed |
+| R17 | core/src/pins.ts | the old word-anywhere test is gone (LoCoMo narration pinned) | killed |
+| R18 | core/src/pins.ts | don't ever / do not ever opens an imperative | killed |
+| R19 | core/src/pins.ts | a question is not an order | killed (after adding the case) |
+| D05 | core/src/pins.ts | directive: double-quoted spans ignored | killed (after adding the case) |
+| D06 | core/src/pins.ts | directive: inline code ignored | killed (after adding the case) |
+| D07 | core/src/pins.ts | directive: fenced code ignored | killed (after adding the case) |

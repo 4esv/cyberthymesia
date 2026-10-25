@@ -13,6 +13,7 @@ import { NODE, PAGE, PIN_BYTES, bytes, canonical, refOf, sha256hex } from '../sr
 import { roots as rootsOf } from '../src/util.ts'
 import { recentBytes, recentLines } from '../src/view.ts'
 import { mthReference } from '../src/merkle.ts'
+import { isDirective } from '../src/pins.ts'
 import { aggText, combine, leafText, mergeClip, tag, toolDigest } from '../src/leaves.ts'
 import type { AggMeta, ItemRow } from '../src/leaves.ts'
 
@@ -108,7 +109,7 @@ function genStream(seed: number, n: number): NormItem[] {
     const t = r.next()
     if (t < 0.3) {
       const dir = r.chance(0.12)
-      const text = dir ? r.pick(['never ', 'Always ', 'from now on ', 'Do not ever ', 'remember that ']) + words(r, r.int(10, 300)) : words(r, size(r))
+      const text = dir ? r.pick(['never ', 'Always ', 'from now on ', 'Do not ever ', 'you must always ']) + words(r, r.int(10, 300)) : words(r, size(r))
       out.push({ ...base, kind: 'user', text })
     } else if (t < 0.6) {
       out.push({ ...base, kind: 'assistant', text: words(r, size(r)) })
@@ -513,7 +514,8 @@ function pinLines(s: Store): { id: number; seq: number; kind: string }[] {
   })
 }
 
-const isDir = (it: NormItem): boolean => it.kind === 'user' && [...it.text].length <= 1000 && /\b(never|always|don't ever|do not ever|remember that|every time|from now on)\b/i.test(it.text)
+// The store pins exactly the items the heuristic names (its precision is checked in store.test.ts).
+const isDir = (it: NormItem, seq = 0): boolean => isDirective(rowOf(it, seq))
 
 test('P7 pins: quota respected, failures auto-resolve, heuristics never remove a pin', () => {
   let over = 0
