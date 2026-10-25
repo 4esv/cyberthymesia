@@ -32,19 +32,21 @@ function fakeStore(seqByUuid: Map<string, number>, opts: { throwOn?: string } = 
 	const calls: string[] = [];
 	const oneShots: boolean[] = [];
 	let tailStart = 0;
-	const block = () => `<memory>\n#0-${Math.max(0, tailStart - 1)}|summary up to ${tailStart}\n</memory>`;
-	const s: Store & { calls: string[]; oneShots: boolean[] } = {
-		calls, oneShots, root: "/r", dbPath: "/r/store.db",
+	const block = () => `## Memory\n<recent>\n#${Math.max(0, tailStart - 1)}|u:last item before ${tailStart}\n</recent>\n`;
+	const viewOpts: unknown[] = [];
+	const s: Store & { calls: string[]; oneShots: boolean[]; viewOpts: unknown[]; pending(n: number): unknown[]; put(r: string, t: string): boolean } = {
+		calls, oneShots, viewOpts, root: "/r", dbPath: "/r/store.db",
 		syncPi(f, o) { oneShots.push(o?.oneShot === true); calls.push(`syncPi ${path.basename(f)}`); return { added: 0 }; },
 		seqOf(h, sess, uuid) { if (opts.throwOn === "seqOf") throw new Error("boom"); return h === "pi" && sess === SESSION ? seqByUuid.get(uuid) : undefined; },
-		view(h, sess): View {
+		view(h, sess, o): View {
 			calls.push("view");
+			viewOpts.push(o);
 			if (opts.throwOn === "view") throw new Error("database is locked");
 			return { block: block(), viewEnd: tailStart, tailStart, bytes: block().length, root: "r", algedonic: false };
 		},
 		fold(h, sess, t) { calls.push(`fold ${t}`); tailStart = t; },
-		zoom: (ref) => `zoom ${ref}`, search: (q) => `search ${q}`, pin: () => 7, unpin: () => {}, pins: () => "<pinned></pinned>",
-		pending: () => [], put: () => true,
+		zoom: (ref) => { if (ref === "#3-9") throw new Error("bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it"); return `zoom ${ref}`; }, search: (q) => `search ${q}`, pin: () => 7, unpin: () => {}, pins: () => "<pinned></pinned>",
+		pending: () => { calls.push("pending"); return []; }, put: () => { calls.push("put"); return true; },
 		status: () => ({ items: 9, nodes: 9, pending: 0, pins: 0, algedonic: false, root: "r" }),
 		close() {},
 	};
@@ -95,7 +97,8 @@ test("context: one view message first, then the tail; folds past TAIL at a user 
 	const out = r.messages as Msg[];
 	console.log("transformed:", JSON.stringify(texts(out)));
 	assert.equal(out[0].role, "user");
-	assert.match((out[0].content as any)[0].text, /^<memory>/);
+	assert.match((out[0].content as any)[0].text, /<recent>/);
+	assert.doesNotMatch((out[0].content as any)[0].text, /<memory>/);
 	// ~6.1 KB raw > TAIL 4000: fold to the earliest user boundary leaving <= 2000 B raw = e8 is
 	// unsynced, so the latest synced boundary e4 (seq 4) wins.
 	assert.deepEqual(store.calls.filter((c) => c.startsWith("fold")), ["fold 4"]);
@@ -168,7 +171,7 @@ test("session_before_compact: our compaction, view as summary, first tail entry 
 	const { pi, ctx, store, entries } = setup({ CYTH_TAIL: String(1 << 20) });
 	const r = pi.emit("session_before_compact", { branchEntries: entries, preparation: { tokensBefore: 1234 }, reason: "threshold" }, ctx);
 	assert.equal(r.cancel, undefined);
-	assert.match(r.compaction.summary, /^<memory>/);
+	assert.match(r.compaction.summary, /<recent>/);
 	assert.equal(r.compaction.tokensBefore, 1234);
 	// forced fold even under TAIL: target = tailBytes/2 -> latest synced boundary e4
 	assert.deepEqual(store.calls.filter((c) => c.startsWith("fold")), ["fold 4"]);
@@ -185,67 +188,46 @@ test("tools: five memory tools, thin calls into core", async () => {
 	assert.deepEqual([...pi.tools.keys()].sort(), ["memory_find", "memory_pin", "memory_pins", "memory_unpin", "memory_zoom"]);
 	const r = await pi.tools.get("memory_zoom").execute("id", { ref: "#0-3" }, undefined, undefined, ctx);
 	assert.equal(r.content[0].text, "zoom #0-3");
+	assert.notEqual(r.isError, true);
 	const p = await pi.tools.get("memory_pin").execute("id", { ref: "#4", reason: "r" }, undefined, undefined, ctx);
 	assert.equal(p.content[0].text, "pinned as 7");
 });
 
-test("summaries: pending -> model -> put, retry once when too long, drained in batches", async () => {
-	const { pi, ctx, store } = setup({ CYTH_SUMMARY_BATCH: "2" });
-	const jobs = [{ ref: "#0-1", prompt: "p0" }, { ref: "#2-3", prompt: "p1" }, { ref: "#4-5", prompt: "p2" }];
-	const puts: [string, string][] = [];
-	const done = new Set<string>();
-	store.pending = (n) => jobs.filter((j) => !done.has(j.ref)).slice(0, n);
-	store.put = (ref, t) => { puts.push([ref, t]); done.add(ref); return true; };
-	const asked: string[] = [];
+test("memory_zoom: a core error comes back as core's message, as an error result", async () => {
+	const { pi, ctx } = setup();
+	const r = await pi.tools.get("memory_zoom").execute("id", { ref: "#3-9" }, undefined, undefined, ctx);
+	assert.equal(r.isError, true);
+	assert.equal(r.content[0].text, "memory_zoom: bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it");
+});
+
+test("no summaries: agent_end and session_start never ask a model, pending or put", async () => {
+	const { pi, ctx, store } = setup();
+	let asked = 0;
 	(ctx as any).model = { provider: "deepseek", id: "flash" };
-	(ctx as any).modelRegistry = {
-		getAvailable: () => [{ provider: "deepseek", id: "pro", cost: { input: 2, output: 2 } }, { provider: "deepseek", id: "flash", cost: { input: 1, output: 1 } }, { provider: "openai", id: "cheap", cost: { input: 0, output: 0 } }],
-		complete: async (model: any, c: any) => {
-			const prompt = c.messages[0].content[0].text as string;
-			asked.push(`${model.id}:${prompt.slice(0, 2)}`);
-			const long = prompt.startsWith("p0");
-			return { content: [{ type: "text", text: long ? "L".repeat(600) : `sum of ${prompt.slice(0, 2)}` }], stopReason: "stop" };
-		},
-	};
-	pi.emit("agent_end", { messages: [] }, ctx);
-	await new Promise((r) => setTimeout(r, 20));
-	// cheapest same-provider; one retry; batch of 2, then a second round for the rest
-	assert.deepEqual(asked, ["flash:p0", "flash:p0", "flash:p1", "flash:p2"]);
-	assert.deepEqual(puts, [["#2-3", "sum of p1"], ["#4-5", "sum of p2"]]); // p0 stayed too long: clip kept, not put
-});
-
-function backlog(ctx: any, store: any, n: number, putOk = true) {
-	let left = n;
-	let puts = 0;
-	store.pending = (k: number) => Array.from({ length: Math.min(k, left) }, (_, i) => ({ ref: `#${puts}-${i}`, prompt: "p" }));
-	store.put = () => { puts++; if (putOk) left--; return putOk; };
-	ctx.model = { provider: "deepseek", id: "flash" };
-	ctx.modelRegistry = { getAvailable: () => [], complete: async () => ({ content: [{ type: "text", text: "s" }], stopReason: "stop" }) };
-	return () => puts;
-}
-
-test("summaries: a drain stops at 8 rounds", async () => {
-	const { pi, ctx, store } = setup();
-	const puts = backlog(ctx, store, 1000);
-	pi.emit("agent_end", { messages: [] }, ctx);
-	await new Promise((r) => setTimeout(r, 50));
-	assert.equal(puts(), 32);
-});
-
-test("summaries: a round that lands nothing ends the drain", async () => {
-	const { pi, ctx, store } = setup();
-	const puts = backlog(ctx, store, 1000, false);
-	pi.emit("agent_end", { messages: [] }, ctx);
-	await new Promise((r) => setTimeout(r, 50));
-	assert.equal(puts(), 4);
-});
-
-test("summaries: session_start drains the backlog", async () => {
-	const { pi, ctx, store } = setup();
-	const puts = backlog(ctx, store, 5);
+	(ctx as any).modelRegistry = { getAvailable: () => [], complete: async () => { asked++; return { content: [{ type: "text", text: "s" }], stopReason: "stop" }; } };
+	store.pending = () => { store.calls.push("pending"); return [{ ref: "#0-1", prompt: "p" }]; };
 	pi.emit("session_start", {}, ctx);
-	await new Promise((r) => setTimeout(r, 50));
-	assert.equal(puts(), 5);
+	pi.emit("agent_end", { messages: [] }, ctx);
+	await new Promise((r) => setTimeout(r, 30));
+	assert.equal(asked, 0);
+	assert.deepEqual(store.calls.filter((c) => c === "pending" || c === "put"), []);
+});
+
+test("status line: items and pins, no summary backlog", () => {
+	const { pi, ctx } = setup();
+	const seen: (string | undefined)[] = [];
+	ctx.ui.setStatus = (_k: string, t: string | undefined) => { seen.push(t); };
+	pi.emit("session_start", {}, ctx);
+	assert.deepEqual(seen, ["cyth 9 items · 0 pins"]);
+});
+
+test("CYTH_HEADER reaches core as the header budget", () => {
+	const a = setup({ CYTH_HEADER: "2048" });
+	a.pi.emit("context", { messages: a.messages() }, a.ctx);
+	assert.deepEqual(a.store.viewOpts[0], { header: 2048, tail: 4000 });
+	const b = setup();
+	b.pi.emit("context", { messages: b.messages() }, b.ctx);
+	assert.deepEqual(b.store.viewOpts[0], { tail: 4000 });
 });
 
 test("openStore always gets the session id, so a cwd change mid-session keeps the store", () => {

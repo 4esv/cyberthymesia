@@ -1,0 +1,19 @@
+[
+  { "id": "H01", "file": "core/src/view.ts", "find": "if (used + bytes(forced) + 1 > budget) break", "replace": "if (used + bytes(forced) > budget) break", "guard": "<recent> <= HEADER: each line's newline counts" },
+  { "id": "H02", "file": "core/src/view.ts", "find": "if (used + bytes(forced) + 1 > budget) break", "replace": "if (used + bytes(forced) + 1 > budget + 512) break", "guard": "<recent> <= HEADER: the budget binds" },
+  { "id": "H03", "file": "core/src/view.ts", "find": "if (used + bytes(forced) + 1 > budget) break", "replace": "if (used + bytes(forced) + 1 > budget) continue", "guard": "contiguous slice: the first line that does not fit stops the walk" },
+  { "id": "H04", "file": "core/src/view.ts", "find": "    out.push(natural)\n", "replace": "    out.push(natural.slice(0, 60))\n", "guard": "whole lines only" },
+  { "id": "H05", "file": "core/src/view.ts", "find": "  return out.reverse()", "replace": "  return out", "guard": "newest last" },
+  { "id": "H06", "file": "core/src/view.ts", "find": "for (let seq = end - 1; seq >= 0; seq--)", "replace": "for (let seq = Math.min(end, 3); seq >= 0; seq--)", "guard": "never an item >= tailStart (and the slice ends at tailStart - 1)" },
+  { "id": "H07", "file": "core/src/view.ts", "find": "  if (out.length > 0) out[out.length - 1] = lineOf(end - out.length, true)\n", "replace": "", "guard": "the oldest line carries its session tag" },
+  { "id": "H08", "file": "core/src/view.ts", "find": "return CONTRACT + '\\n\\n' + pinned + renderRecent(recent)", "replace": "return CONTRACT + '\\n' + Date.now() + '\\n' + pinned + renderRecent(recent)", "guard": "determinism: no clock in the block" },
+  { "id": "H09", "file": "core/src/index.ts", "find": "renderBlock(pinned.block, recentLines(st.tailStart, header, recentLine))", "replace": "renderBlock(pinned.block, recentLines(countItems(), header, recentLine))", "guard": "block stable between folds: <recent> ends at tailStart, not at count" },
+  { "id": "H10", "file": "core/src/index.ts", "find": "return `#${seq}|` + leafText(item, t).text", "replace": "return `#${seq}|` + nodeText(0, seq)", "guard": "recent line rebuilt from the item (tagged oldest line, no legacy summary)" },
+  { "id": "H11", "file": "core/src/index.ts", "find": "return Number.isFinite(n) && n > 0 ? Math.floor(n) : HEADER", "replace": "return Number.isFinite(n) && n >= 0 ? Math.floor(n) : HEADER", "guard": "resolveHeader rejects non-positive CYTH_HEADER" },
+  { "id": "H12", "file": "core/src/index.ts", "find": "if (h !== undefined && Number.isFinite(h) && h > 0) return Math.floor(h)", "replace": "if (h !== undefined && Number.isFinite(h)) return Math.floor(h)", "guard": "resolveHeader rejects a non-positive explicit header" },
+  { "id": "H13", "file": "core/src/index.ts", "find": "const env = process.env.CYTH_HEADER", "replace": "const env = process.env.CYTH_HEADER_X", "guard": "CYTH_HEADER honoured" },
+  { "id": "H14", "file": "core/src/util.ts", "find": "export const HEADER = 8192", "replace": "export const HEADER = 32768", "guard": "default header budget is 8192 bytes" },
+  { "id": "H15", "file": "core/src/index.ts", "find": "st.tailStart = Math.min(Math.max(tailStart, st.tailStart), count)", "replace": "st.tailStart = Math.min(tailStart, count)", "guard": "fold is forward only" },
+  { "id": "H16", "file": "core/src/index.ts", "find": "if (v.view_end !== v.tail_start) problems.push", "replace": "if (false) problems.push", "guard": "verify: viewEnd equals tailStart" },
+  { "id": "H17", "file": "core/src/index.ts", "find": "if (v.tail_start > count) problems.push", "replace": "if (false) problems.push", "guard": "verify: tailStart <= count" }
+]

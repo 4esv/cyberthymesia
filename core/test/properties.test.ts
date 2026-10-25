@@ -9,10 +9,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { NormItem, Store } from '../src/types.ts'
-import { NODE, PAGE, PIN_BYTES, bytes, canonical, clipBytes, oneLine, refOf, sha256hex } from '../src/util.ts'
+import { NODE, PAGE, PIN_BYTES, bytes, canonical, refOf, sha256hex } from '../src/util.ts'
 import { roots as rootsOf } from '../src/util.ts'
-import { coverage, fit, memBytes, reach } from '../src/view.ts'
-import type { ViewState } from '../src/view.ts'
+import { recentBytes, recentLines } from '../src/view.ts'
 import { mthReference } from '../src/merkle.ts'
 import { aggText, combine, leafText, mergeClip, tag, toolDigest } from '../src/leaves.ts'
 import type { AggMeta, ItemRow } from '../src/leaves.ts'
@@ -166,43 +165,63 @@ function withStore<T>(fn: (s: Store) => T): T {
 
 // ---------- block parsing ----------
 
-type Line = { lo: number; hi: number; text: string }
+type Recent = { seq: number; line: string }
 
-function memoryLines(block: string): Line[] {
-  const a = block.indexOf('<memory>\n')
-  const b = block.indexOf('</memory>')
-  assert.ok(a >= 0 && b > a, 'block has a <memory> section')
+function recentOf(block: string): Recent[] {
+  const a = block.indexOf('<recent>\n')
+  const b = block.indexOf('</recent>\n')
+  assert.ok(a >= 0 && b > a, 'block has a <recent> section')
+  assert.ok(!block.includes('<memory>'), 'no <memory> tree in the block')
   const body = block.slice(a + 9, b)
-  return body.split('\n').filter((l) => l !== '').map((l) => {
-    const m = /^#(\d+)(?:-(\d+))?\|(.*)$/.exec(l)
-    assert.ok(m, 'memory line parses: ' + l.slice(0, 60))
-    return { lo: Number(m[1]), hi: Number(m[2] ?? m[1]), text: m[3] }
+  return body.split('\n').filter((l) => l !== '').map((line) => {
+    const m = /^#(\d+)\|/.exec(line)
+    assert.ok(m, 'recent line parses: ' + line.slice(0, 60))
+    return { seq: Number(m[1]), line }
   })
 }
 
-function assertTiles(lines: Line[], viewEnd: number): void {
-  let at = 0
-  for (const l of lines) {
-    const n = l.hi - l.lo + 1
-    assert.equal(l.lo, at, `part #${l.lo}-${l.hi} starts where the previous ended`)
-    assert.ok((n & (n - 1)) === 0 && l.lo % n === 0, `part #${l.lo}-${l.hi} is aligned`)
-    at = l.hi + 1
-  }
-  assert.equal(at, viewEnd, 'parts end at viewEnd')
+const rowOf = (it: NormItem, seq: number): ItemRow => ({ seq, harness: it.harness, session: it.session, agent: it.agent ?? null, uuid: it.uuid, kind: it.kind, ts: it.ts, text: it.tool ? it.tool.output : it.text, meta: it.tool ? { name: it.tool.name, input: it.tool.input, isError: it.tool.isError } : null })
+
+// The exact line SPEC §3 asks for item `seq` of the stream: `#n|` + its leaf
+// line, tagged where the session changes, and always on the oldest line.
+function expectedLine(items: NormItem[], seq: number, first: boolean): string {
+  const it = items[seq]
+  const prev = seq > 0 ? items[seq - 1] : undefined
+  const changes = !prev || prev.harness !== it.harness || prev.session !== it.session
+  return `#${seq}|` + leafText(rowOf(it, seq), first || changes ? tag(it.harness, it.session) : null).text
 }
 
-const memB = (lines: Line[]): number => lines.reduce((s, l) => s + bytes((l.lo === l.hi ? `#${l.lo}` : `#${l.lo}-${l.hi}`) + '|' + l.text) + 1, 0)
+const recentB = (rs: Recent[]): number => rs.reduce((n, x) => n + bytes(x.line) + 1, 0)
+
+// Checks one rendered block against the stream: whole expected lines, newest
+// last and contiguous up to tailStart - 1, within the header budget, and as
+// many lines as fit (the next older one would not).
+function assertRecent(items: NormItem[], v: { block: string; tailStart: number; viewEnd: number }, header: number): void {
+  assert.equal(v.viewEnd, v.tailStart, 'viewEnd is tailStart')
+  const rs = recentOf(v.block)
+  assert.ok(recentB(rs) <= header, `<recent> ${recentB(rs)} > HEADER ${header}`)
+  rs.forEach((x, k) => {
+    assert.ok(x.seq < v.tailStart, `#${x.seq} is at or after tailStart ${v.tailStart}`)
+    assert.equal(x.seq, v.tailStart - rs.length + k, 'newest last, contiguous, ending at tailStart - 1')
+    assert.equal(x.line, expectedLine(items, x.seq, k === 0), `#${x.seq} is its whole leaf line`)
+  })
+  if (rs.length < v.tailStart) {
+    const next = v.tailStart - rs.length - 1
+    const grown = rs.length === 0 ? 0 : recentB(rs) - bytes(rs[0].line) + bytes(expectedLine(items, rs[0].seq, false))
+    assert.ok(grown + bytes(expectedLine(items, next, true)) + 1 > header, `#${next} would have fit`)
+  }
+}
 
 // ---------- driver for P1/P2: random ingest / view / fold sequences ----------
 
-function drive(seed: number, r: Rng, high: number, check: (s: Store, p: Pair, v: ReturnType<Store['view']>) => void): void {
+function drive(seed: number, r: Rng, header: number, check: (items: NormItem[], v: ReturnType<Store['view']>) => void): void {
   const items = genStream(seed, 320)
   const pairs = pairsOf(items)
   withStore((s) => {
     let at = 0
     let count = 0
-    const look = (p: Pair): void => check(s, p, s.view(p.harness, p.session, { high, tailStart: r.int(0, count) }))
-    for (const p of pairs) look(p) // create each view with `high` first: fold on an absent view would use the default HIGH
+    const look = (p: Pair): void => check(items, s.view(p.harness, p.session, { header, tailStart: r.int(0, count) }))
+    for (const p of pairs) look(p)
     while (at < items.length) {
       const op = r.next()
       if (op < 0.45) {
@@ -228,67 +247,84 @@ function drive(seed: number, r: Rng, high: number, check: (s: Store, p: Pair, v:
   })
 }
 
-// ---------- pure helpers for P1/P2 ----------
-
-function pureRun(r: Rng, check: (state: ViewState, high: number) => void): void {
-  const cache = new Map<string, string>()
-  const textOf = (l: number, i: number): string => {
-    const k = l + '/' + i
-    let t = cache.get(k)
-    if (t === undefined) cache.set(k, (t = clipBytes(oneLine(words(r, r.int(1, 500))), NODE)))
-    return t
-  }
-  const state: ViewState = { parts: [], viewEnd: 0, tailStart: 0 }
-  const high = r.pick([32768, 40960, 65536])
-  for (let step = 0; step < 12; step++) {
-    reach(state, state.viewEnd + r.int(0, 400), textOf)
-    fit(state, high, textOf)
-    check(state, high)
-  }
-}
-
 // ---------- the properties ----------
 
-test('P1 view covers [0, viewEnd) exactly, in order (pure and store)', () => {
-  each(seeds(25), (_seed, r) => {
-    pureRun(r, (st) => {
-      assert.deepEqual(coverage(st.parts, st.viewEnd), [])
-      assert.equal(st.viewEnd, st.parts.length === 0 ? 0 : Math.max(...st.parts.map((p) => (p.i + 1) * 2 ** p.l)))
+test('P1 <recent> is whole leaf lines, newest last, never at or after tailStart (pure and store)', () => {
+  each(seeds(40), (_seed, r) => {
+    const len = new Map<number, number>()
+    const lineOf = (seq: number, first: boolean): string => {
+      if (!len.has(seq)) len.set(seq, r.int(5, 520))
+      return `#${seq}|` + (first ? '@t ' : '') + 'x'.repeat(len.get(seq)!)
+    }
+    const end = r.int(0, 300)
+    const budget = r.int(1, 20000)
+    const out = recentLines(end, budget, lineOf)
+    out.forEach((l, k) => {
+      const seq = end - out.length + k
+      assert.equal(l, lineOf(seq, k === 0), `line ${k} is #${seq} whole`)
     })
   })
-  each(seeds(20), (seed, r) =>
-    drive(seed, r, 32768, (_s, _p, v) => {
-      assert.equal(v.tailStart, v.viewEnd, 'view reaches exactly tailStart')
-      assertTiles(memoryLines(v.block), v.viewEnd)
-    }),
-  )
+  each(seeds(20), (seed, r) => drive(seed, r, r.pick([1024, 4096, 8192]), (items, v) => {
+    const rs = recentOf(v.block)
+    rs.forEach((x, k) => {
+      assert.ok(x.seq < v.tailStart)
+      assert.equal(x.seq, v.tailStart - rs.length + k)
+      assert.equal(x.line, expectedLine(items, x.seq, k === 0))
+    })
+  }))
 })
 
-test('P2 after fit, memory bytes <= HIGH (pure and store)', () => {
-  let batched = 0
-  each(seeds(25), (_seed, r) => {
-    pureRun(r, (st, high) => {
-      assert.ok(memBytes(st.parts) <= high, `memory ${memBytes(st.parts)} > HIGH ${high}`)
-    })
-    const cache = new Map<string, string>()
-    const textOf = (l: number, i: number): string => cache.get(l + '/' + i) ?? (cache.set(l + '/' + i, 'x'.repeat(r.int(100, 500))), cache.get(l + '/' + i)!)
-    const st: ViewState = { parts: [], viewEnd: 0, tailStart: 0 }
-    reach(st, 600, textOf)
-    assert.ok(memBytes(st.parts) > 32768)
-    if (fit(st, 32768, textOf)) batched++
-    assert.ok(memBytes(st.parts) <= 32768 / 2, 'fit lands at or under HIGH/2')
+test('P2 <recent> is at most HEADER bytes and holds every line that fits (pure and store)', () => {
+  each(seeds(40), (_seed, r) => {
+    const lineOf = (seq: number, first: boolean): string => `#${seq}|` + (first ? '@t ' : '') + 'y'.repeat((seq * 37) % 500 + 3)
+    const end = r.int(0, 300)
+    const budget = r.int(1, 20000)
+    const out = recentLines(end, budget, lineOf)
+    assert.ok(recentBytes(out) <= budget, `${recentBytes(out)} > ${budget}`)
+    if (out.length < end) {
+      const next = end - out.length - 1
+      const grown = out.length === 0 ? 0 : recentBytes(out) - bytes(out[0]) + bytes(lineOf(next + 1, false))
+      assert.ok(grown + bytes(lineOf(next, true)) + 1 > budget, 'the next older line would not fit')
+    }
   })
-  assert.ok(batched > 0, 'pure fit batched at least once')
-  let heavy = 0
+  // Boundary: each line's '\n' counts. Ten 9-byte lines cost 10 bytes each.
+  const nine = (seq: number): string => `#${seq}|` + 'z'.repeat(6)
+  assert.equal(recentLines(10, 30, nine).length, 3)
+  assert.equal(recentLines(10, 29, nine).length, 2, 'a 29-byte budget holds two 10-byte lines, not three')
+  let full = 0
   each(seeds(20), (seed, r) => {
-    const high = r.pick([32768, 49152])
-    drive(seed, r, high, (_s, _p, v) => {
-      const b = memB(memoryLines(v.block))
-      assert.ok(b <= high, `memory ${b} > HIGH ${high}`)
-      if (v.viewEnd > 150) heavy++
+    const header = r.pick([1024, 4096, 8192])
+    drive(seed, r, header, (items, v) => {
+      assertRecent(items, v, header)
+      if (recentOf(v.block).length < v.tailStart) full++
     })
   })
-  assert.ok(heavy > 0, 'store runs reached sizes where fit matters')
+  assert.ok(full > 0, 'store runs reached sizes where the budget binds')
+})
+
+test('P2b the block is unchanged between folds while only the tail grows', () => {
+  each(seeds(20), (seed, r) => {
+    const items = genStream(seed, 200)
+    withStore((s) => {
+      const header = r.pick([1024, 8192])
+      const first = r.int(1, 150)
+      s.ingest(items.slice(0, first))
+      const p = { harness: items[0].harness, session: items[0].session }
+      const v0 = s.view(p.harness, p.session, { header, tailStart: r.int(0, first) })
+      // The tail grows with plain replies: no directive and no tool, so no pin changes.
+      const tail: NormItem[] = Array.from({ length: r.int(1, 80) }, (_, k) => ({ ...items[first], uuid: `tail-${seed}-${k}`, kind: 'assistant', tool: undefined, text: 'reply ' + k }))
+      for (const c of chunked(r, tail, 10)) {
+        s.ingest(c)
+        const v = s.view(p.harness, p.session, { header })
+        assert.ok(v.block === v0.block, 'block changed while only the tail grew')
+        assert.equal(v.tailStart, v0.tailStart)
+      }
+      const before = s.view(p.harness, p.session, { header })
+      s.fold(p.harness, p.session, before.tailStart + 1)
+      const after = s.view(p.harness, p.session, { header })
+      assert.ok(after.block !== before.block, 'a fold that moves tailStart changes <recent>')
+    })
+  })
 })
 
 test('P3 every node text is <= 512 bytes and one line', () => {
@@ -562,15 +598,15 @@ test('P8 determinism: the same input gives byte-identical view blocks', () => {
   each(seeds(20), (seed, r) => {
     const items = genStream(seed, 250)
     const pairs = pairsOf(items)
-    type Op = { t: 'ingest'; c: NormItem[] } | { t: 'view'; p: Pair; tail: number } | { t: 'fold'; p: Pair; at: number }
+    type Op = { t: 'ingest'; c: NormItem[] } | { t: 'view'; p: Pair; tail: number; header: number } | { t: 'fold'; p: Pair; at: number }
     const ops: Op[] = []
     let n = 0
     for (const c of chunked(r, items, 50)) {
       ops.push({ t: 'ingest', c })
       n += c.length
-      ops.push({ t: 'view', p: r.pick(pairs), tail: r.int(0, n) })
+      ops.push({ t: 'view', p: r.pick(pairs), tail: r.int(0, n), header: r.pick([512, 2048, 8192]) })
       ops.push({ t: 'fold', p: r.pick(pairs), at: r.int(0, n) })
-      ops.push({ t: 'view', p: r.pick(pairs), tail: r.int(0, n) })
+      ops.push({ t: 'view', p: r.pick(pairs), tail: r.int(0, n), header: r.pick([512, 2048, 8192]) })
     }
     const run = (): string[] =>
       withStore((s) => {
@@ -579,7 +615,7 @@ test('P8 determinism: the same input gives byte-identical view blocks', () => {
           if (op.t === 'ingest') log.push(JSON.stringify(s.ingest(op.c)))
           else if (op.t === 'fold') s.fold(op.p.harness, op.p.session, op.at)
           else {
-            const v = s.view(op.p.harness, op.p.session, { high: 32768, tailStart: op.tail })
+            const v = s.view(op.p.harness, op.p.session, { header: op.header, tailStart: op.tail })
             log.push(v.block, JSON.stringify([v.viewEnd, v.tailStart, v.bytes, v.root, v.algedonic]))
           }
         }

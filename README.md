@@ -1,9 +1,9 @@
 # cyberthymesia
 
 Every chat goes forever. The context window becomes a cache over a lossless,
-auditable log: the model sees the whole history of the project as a binary tree
-of one-line summaries, with detail fading by age, and zooms down to the verbatim
-record when it needs it. One store per project, shared by every session of every
+auditable log: the model sees a small fixed header (pins and the newest items)
+and searches the full verbatim record when it needs anything older. No model
+summarizes the log. One store per project, shared by every session of every
 harness.
 
 - `core/`: the store, the tree, the view, search, zoom, pins and the audit trail. Node ≥ 22, zero dependencies.

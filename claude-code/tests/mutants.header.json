@@ -1,0 +1,30 @@
+[
+  {
+    "id": "CH1",
+    "file": "claude-code/hooks/register.ts",
+    "find": "err instanceof CliError && err.core !== '' ? err.core :",
+    "replace": "false ? '' :",
+    "guard": "a tool error is core's message, not the CLI wrapper"
+  },
+  {
+    "id": "CH2",
+    "file": "claude-code/hooks/register.ts",
+    "find": "return { deny: toolError(name, err) }",
+    "replace": "return { deny: `${name} failed` }",
+    "guard": "a tool error is not a bare 'failed'"
+  },
+  {
+    "id": "CH3",
+    "file": "claude-code/hooks/register.ts",
+    "find": "const parts = [`cyth ${s.items ?? 0} items`, `${s.pins ?? 0} pins`]",
+    "replace": "const parts = [`cyth ${s.items ?? 0} items`, `0 pending`, `${s.pins ?? 0} pins`]",
+    "guard": "status line has no summary backlog"
+  },
+  {
+    "id": "CH4",
+    "file": "claude-code/hooks/register.ts",
+    "find": "    failNote($, 'status', err)\n  }\n  // No compaction trigger",
+    "replace": "    failNote($, 'status', err)\n  }\n  await cythJson($, cwd, ['pending', '--limit', '4'])\n  // No compaction trigger",
+    "guard": "no summaries: a turn never drains pending"
+  }
+]

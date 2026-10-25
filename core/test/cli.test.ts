@@ -84,10 +84,11 @@ test('status counts the items and the directive pin', () => {
   assert.equal(typeof st.root, 'string')
 })
 
-test('view renders the memory block', () => {
+test('view renders the header block', () => {
   const v = json('view', 'pi', 's1')
   assert.equal(typeof v.block, 'string')
-  assert.ok(v.block.includes('<memory>'), v.block.slice(0, 200))
+  assert.ok(v.block.includes('<recent>\n#0|'), v.block.slice(0, 200))
+  assert.ok(!v.block.includes('<memory>'))
   assert.equal(v.viewEnd, 3)
 })
 

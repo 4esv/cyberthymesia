@@ -55,7 +55,7 @@ export interface Store {
   syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number }
   backfill(opts: { claudeDir?: string; piDir?: string }): { added: number }
   seqOf(harness: string, session: string, uuid: string): number | undefined
-  view(harness: string, session: string, opts?: { high?: number; tail?: number; tailStart?: number }): ViewResult
+  view(harness: string, session: string, opts?: { header?: number; tail?: number; tailStart?: number }): ViewResult
   fold(harness: string, session: string, tailStart: number): void
   zoom(ref: string): string
   search(q: string, opts?: { regex?: boolean; limit?: number }): string

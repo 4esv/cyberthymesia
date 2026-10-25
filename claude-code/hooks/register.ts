@@ -14,19 +14,14 @@ import { chooseTail } from './tail'
 
 const PLUGIN = 'cyberthymesia'
 const DEFAULT_TAIL = 160 * 1024 // bytes (SPEC §3)
-const NODE_BYTES = 512 // SPEC §2
-const SUMMARY_BATCH = 4
-// A thinking model can spend a small cap on thought and answer nothing: low effort, room to reply.
-const SUMMARY_ASK = { maxTokens: 1024, effort: 'low' as const, timeoutMs: 60_000 }
-const SUMMARY_ROUNDS = 8 // batches per drain: at most 32 summaries per turn
 const CONTEXT_BLOCK = 'cyberthymesia'
 
 // The contract (SPEC §7) is not kept here: core renders it at the head of the
-// view block, so the model is told about <memory> only when <memory> is there.
+// view block, so the model is told about <recent> only when <recent> is there.
+// No model is ever asked for a summary: the view is a fixed header over search.
 
 // Module state: lost on a hot reload, which only costs a re-derivation.
 const transcripts = new Map<string, string>() // session key -> transcript path
-let summarizing = false
 
 // ---------- env and the CLI ----------
 
@@ -51,15 +46,29 @@ async function cliPaths($: EngineInterface): Promise<{ node: string; bin: string
   return { node, bin, core }
 }
 
+/** A nonzero exit of the CLI; `core` is core's own message (its stderr). */
+class CliError extends Error {
+  core: string
+  constructor(cmd: string, code: number, stderr: string) {
+    const core = stderr.trim().split('\n')[0] ?? ''
+    super(`cyth ${cmd} exited ${code}: ${core}`)
+    this.core = core
+  }
+}
+
+/** What the model reads when a memory tool fails: core's message when there is one. */
+function toolError(name: string, err: unknown): string {
+  const msg = err instanceof CliError && err.core !== '' ? err.core : err instanceof Error ? err.message : String(err)
+  return `${name}: ${msg}`
+}
+
 /** Runs `node cyth.ts <args> --cwd <cwd> --json`; throws on a nonzero exit. */
 async function cyth($: EngineInterface, cwd: string, args: readonly string[], timeoutMs = 30_000): Promise<string> {
   const { node, bin } = await cliPaths($)
   // The session stays in the store it first used, whatever cwd has become.
   const session = await $.session.id()
   const r = await $.process.run([node, bin, '--cwd', cwd, '--session', `claude:${session}`, '--json', ...args], { cwd, timeoutMs })
-  if (r.exitCode !== 0) {
-    throw new Error(`cyth ${args[0] ?? ''} exited ${r.exitCode}: ${r.stderr.trim().split('\n')[0] ?? ''}`)
-  }
+  if (r.exitCode !== 0) throw new CliError(args[0] ?? '', r.exitCode, r.stderr)
   return r.stdout
 }
 
@@ -144,11 +153,11 @@ async function sync($: EngineInterface, session: string, agentId: string | undef
 
 // ---------- status line ----------
 
-type Status = { items?: number; pending?: number; pins?: number; algedonic?: boolean }
+type Status = { items?: number; pins?: number; algedonic?: boolean }
 
 async function showStatus($: EngineInterface, cwd: string): Promise<void> {
   const s = (await cythJson($, cwd, ['status'])) as Status
-  const parts = [`cyth ${s.items ?? 0} items`, `${s.pending ?? 0} pending`, `${s.pins ?? 0} pins`]
+  const parts = [`cyth ${s.items ?? 0} items`, `${s.pins ?? 0} pins`]
   if (s.algedonic === true) parts.push('ALGEDONIC: review with memory_pins')
   $.ui.status(parts.join(' · '))
 }
@@ -187,56 +196,14 @@ async function compactAnswer($: EngineInterface, e: SessionCompactInput): Promis
   return { messages: e.messages.slice(cut.index) }
 }
 
-/** The rendered view (contract, <memory>, <pinned>) for one session key. */
+/** The rendered view (contract, <pinned>, <recent>) for one session key. */
 async function viewBlock($: EngineInterface, cwd: string, session: string): Promise<string> {
   const block = textOf(await cythJson($, cwd, ['view', 'claude', session]))
   if (block.trim() === '') throw new Error('empty view block')
   return block
 }
 
-// ---------- after a turn: ingest, trigger, summaries ----------
-
-async function summarizeOne($: EngineInterface, cwd: string, model: string, ref: string, prompt: string): Promise<boolean> {
-  const first = await $.model.complete({ model, prompt, ...SUMMARY_ASK })
-  if (!first.isAnswered) return false
-  let text = first.text.trim().replace(/\s*\n\s*/g, ' ')
-  if (text === '') return false // an empty answer is no summary; the clip stays
-  const n = new TextEncoder().encode(text).length
-  if (n > NODE_BYTES) {
-    const retry = await $.model.complete({
-      model,
-      prompt: `${prompt}\n\n${text}\n\nToo long: ${n} bytes, limit ${NODE_BYTES}. Cut the least valuable items.`,
-      ...SUMMARY_ASK,
-    })
-    if (!retry.isAnswered) return false
-    text = retry.text.trim().replace(/\s*\n\s*/g, ' ')
-    if (text === '') return false
-    if (new TextEncoder().encode(text).length > NODE_BYTES) return false // core keeps clip
-  }
-  const put = (await cythJson($, cwd, ['put', ref, text])) as { ok?: unknown }
-  return put.ok === true
-}
-
-async function summarize($: EngineInterface, cwd: string): Promise<void> {
-  if (summarizing) return
-  summarizing = true
-  try {
-    const model = (await $.env.get('CYTH_SUMMARY_MODEL')) || 'haiku'
-    // Drain in rounds: one batch per turn falls behind, since every turn adds
-    // several clip nodes. Stop when nothing is pending or a round lands nothing.
-    for (let round = 0; round < SUMMARY_ROUNDS; round++) {
-      const raw = await cythJson($, cwd, ['pending', '--limit', String(SUMMARY_BATCH)])
-      const jobs = ((Array.isArray(raw) ? raw : []) as { ref?: unknown; prompt?: unknown }[])
-        .filter(j => typeof j.ref === 'string' && typeof j.prompt === 'string')
-      if (jobs.length === 0) return
-      // At most SUMMARY_BATCH in flight; one failure does not stop the others.
-      const done = await Promise.allSettled(jobs.map(j => summarizeOne($, cwd, model, j.ref as string, j.prompt as string)))
-      if (!done.some(d => d.status === 'fulfilled' && d.value)) return
-    }
-  } finally {
-    summarizing = false
-  }
-}
+// ---------- after a turn: ingest, status ----------
 
 async function afterTurn($: EngineInterface, agentId: string | undefined, cwd: string): Promise<void> {
   const id = await $.session.id()
@@ -255,12 +222,6 @@ async function afterTurn($: EngineInterface, agentId: string | undefined, cwd: s
   // raises skips this module's own session.compact hook (re-entry), so the
   // engine's summarizer would run instead. The engine's own triggers (auto
   // near the window limit, /compact) reach the hook below.
-  try {
-    await summarize($, cwd)
-    await showStatus($, cwd)
-  } catch (err) {
-    failNote($, 'summaries', err)
-  }
 }
 
 // ---------- tools ----------
@@ -268,8 +229,8 @@ async function afterTurn($: EngineInterface, agentId: string | undefined, cwd: s
 const TOOLS = [
   {
     name: 'memory_zoom',
-    description: 'Open a memory ref: #a-b gives its two halves, #n the item whole (paged; #n@offset continues).',
-    inputSchema: { type: 'object', properties: { ref: { type: 'string', description: '#a-b, #n or #n@offset' } }, required: ['ref'] },
+    description: 'Open a memory ref: #n gives item n whole (paged; #n@offset continues); an aligned range #a-b gives its two halves.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string', description: '#n, #n@offset or #a-b' } }, required: ['ref'] },
     argv: (i: Record<string, unknown>) => ['zoom', String(i.ref)],
   },
   {
@@ -323,7 +284,7 @@ async function serveTool($: EngineInterface, name: string, e: object): Promise<T
   try {
     return { result: await runTool($, name, e as unknown as Record<string, unknown>) }
   } catch (err) {
-    return { deny: `${name}: ${err instanceof Error ? err.message : String(err)}` }
+    return { deny: toolError(name, err) }
   }
 }
 
@@ -344,18 +305,14 @@ export const register: Register = on => {
     } catch (err) {
       failNote($, 'status', err)
     }
-    // Work down the backlog other sessions left, off the start's path.
-    $.clock.after(1000, () => {
-      summarize($, cwd).catch(err => failNote($, 'summaries', err))
-    })
     return started
   })
 
   // The view block rides on the conversation's first user message, beside
   // CLAUDE.md, from the first request on: a new session sees the project's
-  // tree at once. The engine asks again after a compaction. If the view
-  // cannot be built, nothing is added, so nothing claims a <memory> that is
-  // not there.
+  // pins and newest items at once. The engine asks again after a compaction.
+  // If the view cannot be built, nothing is added, so nothing claims a log
+  // the model cannot reach.
   on('prompt.context', async ($, e, next) => {
     const ctx = await next(e)
     if (await disabled($)) return ctx
@@ -384,7 +341,7 @@ export const register: Register = on => {
     if (await disabled($)) return done
     const cwd = await $.session.cwd()
     const agentId = e.agentId
-    // Off the turn's path: summaries must never block one.
+    // Off the turn's path: ingest must never block one.
     $.clock.after(250, () => {
       afterTurn($, agentId, cwd).catch(err => failNote($, 'after-turn', err))
     })
@@ -412,13 +369,13 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'mcp__cyberthymesia__memory_zoom' }, async ($, e, next) => ((await disabled($)) ? next(e) : serveTool($, 'memory_zoom', e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'memory_zoom failed' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: toolError('memory_zoom', next.error) }))
   on('tool.call', { tool: 'mcp__cyberthymesia__memory_find' }, async ($, e, next) => ((await disabled($)) ? next(e) : serveTool($, 'memory_find', e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'memory_find failed' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: toolError('memory_find', next.error) }))
   on('tool.call', { tool: 'mcp__cyberthymesia__memory_pin' }, async ($, e, next) => ((await disabled($)) ? next(e) : serveTool($, 'memory_pin', e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'memory_pin failed' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: toolError('memory_pin', next.error) }))
   on('tool.call', { tool: 'mcp__cyberthymesia__memory_unpin' }, async ($, e, next) => ((await disabled($)) ? next(e) : serveTool($, 'memory_unpin', e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'memory_unpin failed' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: toolError('memory_unpin', next.error) }))
   on('tool.call', { tool: 'mcp__cyberthymesia__memory_pins' }, async ($, e, next) => ((await disabled($)) ? next(e) : serveTool($, 'memory_pins', e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'memory_pins failed' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: toolError('memory_pins', next.error) }))
 }

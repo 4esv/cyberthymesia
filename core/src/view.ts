@@ -1,167 +1,68 @@
-// The view (SPEC §3): an ordered list of parts covering [0, viewEnd), each a
-// tree node with a text snapshot. reach() appends leaves; fit() merges the
-// most due sibling pairs down to half once the memory lines pass `high`.
-// Pure: node texts come from a lookup.
+// The view (SPEC §3): a small fixed header, not a summary of the history.
+// It is the contract, the <pinned> block and <recent>: the newest items
+// before tailStart, one leaf line each, newest last, whole lines only, within
+// a fixed byte budget. Everything older is reached with memory_find and
+// memory_zoom. Pure: item lines come from a lookup.
 
-import { bytes, refOf, span } from './util.ts'
-
-export type Part = { l: number; i: number; text: string }
-export type ViewState = { parts: Part[]; viewEnd: number; tailStart: number }
-export type TextOf = (l: number, i: number) => string
+import { bytes } from './util.ts'
 
 export const CONTRACT = `## Memory: cyberthymesia
-This project keeps one log of every session, Claude Code and Pi alike: each user
-message, assistant reply and tool call, verbatim. <memory> shows that log as a
-binary tree, oldest first, one line per node: \`#a-b|...\` covers items a..b,
-\`#n|...\` is item n. Lines start u: (user), a: (assistant) or t: (tool);
-@c1234 / @p1234 marks a switch to another Claude Code or Pi session. Older
-history is merged into fewer, coarser lines. A line with … in it is clipped
-text still waiting for its one-line summary. The messages after this block are
-the recent part of this session, verbatim. The block was built when this
-conversation started or last compacted; memory_find and memory_pins read the
-log as it is now.
-- The latest word on a thing is the truth. Before you act on, guess at or ask
-  about anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): #a-b gives its two halves; #n gives item n whole (paged: #n@offset).
+This project keeps a full log of every session, Claude Code and Pi alike. The log
+holds each user message, assistant reply and tool call, verbatim. Searching it
+is cheap.
+<recent> is only the latest slice of that log, not the history. Older items are
+not shown here, but they are in the log.
+Each <recent> line is one item, oldest first: \`#n|\` then u: (user), a: (assistant)
+or t: (tool). @c1234 or @p1234 names the Claude Code or Pi session where it changes.
+A line ending in … is clipped. A tool line is a digest of the call.
+The messages after this block are the recent part of this session, verbatim.
+This block was built when this conversation started or last compacted. The tools
+read the log as it is now.
+- Before you say something is absent, unknown or not discussed, call memory_find.
+  Try at least two phrasings.
+- Never ask the user to repeat context the log may hold. Find it instead.
+- The latest word on a thing is the truth.
 - memory_find(query): full-text search over every item, newest first.
+- memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
+  Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
-- <pinned> holds user directives and unresolved tool failures, flagged
-  automatically or pinned by hand, verbatim (first 1 KB) whatever their age.
-  Follow them; if one is resolved or was flagged by mistake, say so and unpin it.
-- Tool output survives here only as one-line digests: say in your reply what
-  you learned that matters later.`
+- <pinned> holds user directives and unresolved tool failures, verbatim (first 1 KB)
+  whatever their age. Follow them. If one is resolved or was flagged by mistake,
+  say so and unpin it.`
 
-export function partLine(p: Part): string {
-  return refOf(p.l, p.i) + '|' + p.text
+// The line of item `seq`; `first` asks for its session tag even when the item
+// before it is from the same session (the oldest line has no line above it).
+export type LineOf = (seq: number, first: boolean) => string
+
+// The newest lines before `end`, newest last, whole lines only, while their
+// bytes (each line plus its '\n') stay <= budget. Stops at the first line that
+// does not fit, so the slice is contiguous. The oldest line carries its tag.
+export function recentLines(end: number, budget: number, lineOf: LineOf): string[] {
+  const out: string[] = []
+  let used = 0
+  for (let seq = end - 1; seq >= 0; seq--) {
+    const forced = lineOf(seq, true)
+    if (used + bytes(forced) + 1 > budget) break
+    const natural = lineOf(seq, false)
+    out.push(natural)
+    used += bytes(natural) + 1
+  }
+  if (out.length > 0) out[out.length - 1] = lineOf(end - out.length, true)
+  return out.reverse()
 }
 
-export function partBytes(p: Part): number {
-  return bytes(partLine(p)) + 1
-}
-
-export function memBytes(parts: Part[]): number {
+export function recentBytes(lines: string[]): number {
   let n = 0
-  for (const p of parts) n += partBytes(p)
+  for (const l of lines) n += bytes(l) + 1
   return n
 }
 
-export function reach(state: ViewState, end: number, textOf: TextOf): void {
-  for (let i = state.viewEnd; i < end; i++) state.parts.push({ l: 0, i, text: textOf(0, i) })
-  if (end > state.viewEnd) state.viewEnd = end
+export function renderRecent(lines: string[]): string {
+  let s = '<recent>\n'
+  for (const l of lines) s += l + '\n'
+  return s + '</recent>\n'
 }
 
-type Cand = { d: number; k: number; l: number; i: number }
-
-function before(x: Cand, y: Cand): boolean {
-  return x.d > y.d || (x.d === y.d && x.k < y.k)
-}
-
-class Heap {
-  a: Cand[] = []
-  push(c: Cand): void {
-    const a = this.a
-    a.push(c)
-    let x = a.length - 1
-    while (x > 0) {
-      const p = (x - 1) >> 1
-      if (!before(a[x], a[p])) break
-      ;[a[x], a[p]] = [a[p], a[x]]
-      x = p
-    }
-  }
-  pop(): Cand | undefined {
-    const a = this.a
-    if (a.length === 0) return undefined
-    const top = a[0]
-    const last = a.pop()!
-    if (a.length > 0) {
-      a[0] = last
-      let x = 0
-      for (;;) {
-        const l = 2 * x + 1
-        const r = l + 1
-        let m = x
-        if (l < a.length && before(a[l], a[m])) m = l
-        if (r < a.length && before(a[r], a[m])) m = r
-        if (m === x) break
-        ;[a[x], a[m]] = [a[m], a[x]]
-        x = m
-      }
-    }
-    return top
-  }
-}
-
-// One batch: if the memory lines exceed `high`, refresh every snapshot, then
-// merge the most due adjacent sibling pairs, d = (viewEnd+1)/2^l − i, ties to
-// the older, until ≤ high/2 or nothing merges. Returns whether it batched.
-export function fit(state: ViewState, high: number, textOf: TextOf): boolean {
-  if (memBytes(state.parts) <= high) return false
-  const view: (Part | null)[] = state.parts.map((p) => ({ l: p.l, i: p.i, text: textOf(p.l, p.i) }))
-  const n = view.length
-  const next = Array.from({ length: n }, (_, k) => k + 1)
-  const prev = Array.from({ length: n }, (_, k) => k - 1)
-  let size = 0
-  for (const p of view) size += partBytes(p!)
-  const T = state.viewEnd
-  const heap = new Heap()
-  const offer = (k: number): void => {
-    if (k < 0 || k >= n) return
-    const a = view[k]
-    const j = next[k]
-    const b = j < n ? view[j] : null
-    if (!a || !b || a.l !== b.l || a.i % 2 !== 0 || b.i !== a.i + 1) return
-    heap.push({ d: (T + 1) / 2 ** a.l - a.i, k, l: a.l, i: a.i })
-  }
-  for (let k = 0; k < n; k++) offer(k)
-  const low = high / 2
-  while (size > low) {
-    const c = heap.pop()
-    if (c === undefined) break
-    const a = view[c.k]
-    const j = next[c.k]
-    const b = j < n ? view[j] : null
-    if (!a || !b || a.l !== c.l || a.i !== c.i || b.l !== c.l || b.i !== c.i + 1) continue
-    const up: Part = { l: a.l + 1, i: a.i / 2, text: textOf(a.l + 1, a.i / 2) }
-    size += partBytes(up) - partBytes(a) - partBytes(b)
-    view[c.k] = up
-    view[j] = null
-    next[c.k] = next[j]
-    if (next[j] < n) prev[next[j]] = c.k
-    offer(prev[c.k])
-    offer(c.k)
-  }
-  state.parts = view.filter((p): p is Part => p !== null)
-  return true
-}
-
-// Problems with a view's coverage of [0, viewEnd): gaps, overlaps, order,
-// misalignment. Empty when it covers exactly.
-export function coverage(parts: { l: number; i: number }[], viewEnd: number): string[] {
-  const out: string[] = []
-  let at = 0
-  for (const p of parts) {
-    if (!Number.isInteger(p.l) || !Number.isInteger(p.i) || p.l < 0 || p.i < 0) {
-      out.push(`bad part (${p.l},${p.i})`)
-      return out
-    }
-    const [lo, hi] = span(p.l, p.i)
-    if (lo !== at) {
-      out.push(`part ${refOf(p.l, p.i)} starts at ${lo}, expected ${at}`)
-      return out
-    }
-    at = hi + 1
-  }
-  if (at !== viewEnd) out.push(`parts end at ${at}, viewEnd is ${viewEnd}`)
-  return out
-}
-
-export function renderMemory(parts: Part[]): string {
-  let s = '<memory>\n'
-  for (const p of parts) s += partLine(p) + '\n'
-  return s + '</memory>\n'
-}
-
-export function renderBlock(parts: Part[], pinned: string): string {
-  return CONTRACT + '\n\n' + renderMemory(parts) + pinned
+export function renderBlock(pinned: string, recent: string[]): string {
+  return CONTRACT + '\n\n' + pinned + renderRecent(recent)
 }

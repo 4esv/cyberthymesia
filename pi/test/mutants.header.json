@@ -1,0 +1,37 @@
+[
+  {
+    "id": "PH1",
+    "file": "pi/src/extension.ts",
+    "find": "catch (err) { return { ...text(`${name}: ${err instanceof Error ? err.message : String(err)}`), isError: true }; }",
+    "replace": "catch (err) { return { ...text(`${name} failed`), isError: true }; }",
+    "guard": "a tool error carries core's message"
+  },
+  {
+    "id": "PH2",
+    "file": "pi/src/extension.ts",
+    "find": "String(err)}`), isError: true }; }",
+    "replace": "String(err)}`) }; }",
+    "guard": "a tool error is an error result"
+  },
+  {
+    "id": "PH3",
+    "file": "pi/src/extension.ts",
+    "find": "const header = num(env.CYTH_HEADER);",
+    "replace": "const header = num(env.CYTH_HIGH);",
+    "guard": "CYTH_HEADER reaches core's view"
+  },
+  {
+    "id": "PH4",
+    "file": "pi/src/extension.ts",
+    "find": "cyth ${st.items} items · ${st.pins} pins",
+    "replace": "cyth ${st.items} items · ${st.pending} pending · ${st.pins} pins",
+    "guard": "status line has no summary backlog"
+  },
+  {
+    "id": "PH5",
+    "file": "pi/src/extension.ts",
+    "find": "\t\t\tshowStatus(ctx, s);\n\t\t} catch (err) {\n\t\t\tfailOpen(ctx, \"ingest\", err);",
+    "replace": "\t\t\tshowStatus(ctx, s);\n\t\t\t(s as any).pending(4);\n\t\t} catch (err) {\n\t\t\tfailOpen(ctx, \"ingest\", err);",
+    "guard": "no summaries: agent_end never drains pending"
+  }
+]

@@ -330,37 +330,48 @@ test('view: tailStart clamps, default, high, bytes, root, views_log dedupe, alge
   assert.equal(db().prepare("SELECT COUNT(*) AS c FROM views_log WHERE session = 'b'").get().c, 2)
 })
 
-test('view: explicit high on creation and on existing view persists, fold uses it', () => {
+const recentOf = (block: string): string[] => {
+  const a = block.indexOf('<recent>\n')
+  const b = block.indexOf('</recent>\n')
+  assert.ok(a >= 0 && b > a, 'block has a <recent> section')
+  return block.slice(a + 9, b).split('\n').filter((l) => l !== '')
+}
+
+test('view: explicit header budget, whole lines, newest last, nothing at or after tailStart', () => {
   const { s } = mk()
   const items: NormItem[] = []
   for (let k = 0; k < 40; k++) items.push(user('message number ' + k + ' with a few more words to fill', 'sess1', 'h' + k))
   s.ingest(items)
-  const small = s.view('c', 'created', { high: 700, tailStart: 40 })
-  assert.ok(small.block.split('\n').filter((l) => l.startsWith('#')).length < 40) // fitted on creation
-  const big = s.view('c', 'late', { tailStart: 20 }) // default high: no merging
-  assert.equal(big.block.split('\n').filter((l) => /^#\d+\|/.test(l)).length, 20)
-  s.view('c', 'late', { high: 700 }) // persisted
-  s.fold('c', 'late', 40)
-  const after = s.view('c', 'late')
-  assert.ok(after.block.split('\n').filter((l) => /^#\d/.test(l)).length < 40)
+  const small = recentOf(s.view('c', 'created', { header: 300, tailStart: 30 }).block)
+  assert.ok(small.length > 0 && small.length < 30)
+  assert.ok(small.reduce((n, l) => n + bytes(l) + 1, 0) <= 300)
+  assert.equal(small.at(-1)!.split('|')[0], '#29') // newest last, the item just before tailStart
+  assert.match(small[0], /^#\d+\|u:@c/) // the oldest line names its session
+  const big = recentOf(s.view('c', 'late', { tailStart: 20 }).block) // default 8 KB: all 20 fit
+  assert.deepEqual(big.map((l) => l.split('|')[0]), Array.from({ length: 20 }, (_, k) => '#' + k))
+  assert.doesNotMatch(s.view('c', 'late').block, /<memory>/)
 })
 
-test('resolveHigh: zero and bad values fall back; CYTH_HIGH honoured', () => {
+test('resolveHeader: zero and bad values fall back; CYTH_HEADER honoured', () => {
   const { s } = mk()
   const items: NormItem[] = []
   for (let k = 0; k < 20; k++) items.push(user('message number ' + k + ' with filler words here', 'sess1', 'r' + k))
   s.ingest(items)
-  const lines = (b: string) => b.split('\n').filter((l) => /^#\d/.test(l)).length
-  assert.equal(lines(s.view('c', 'z', { high: 0 }).block), 20) // 0 -> default (32K): no merging
-  const saved = process.env.CYTH_HIGH
+  const lines = (b: string) => recentOf(b).length
+  assert.equal(lines(s.view('c', 'z', { header: 0 }).block), 20) // 0 -> default (8 KB)
+  assert.equal(lines(s.view('c', 'n', { header: -4 }).block), 20)
+  const saved = process.env.CYTH_HEADER
   try {
-    process.env.CYTH_HIGH = '0'
+    process.env.CYTH_HEADER = '0'
     assert.equal(lines(s.view('c', 'e0').block), 20)
-    process.env.CYTH_HIGH = '600'
-    assert.ok(lines(s.view('c', 'e1').block) < 20)
+    process.env.CYTH_HEADER = 'junk'
+    assert.equal(lines(s.view('c', 'e2').block), 20)
+    process.env.CYTH_HEADER = '200'
+    const few = lines(s.view('c', 'e1').block)
+    assert.ok(few > 0 && few < 20, String(few))
   } finally {
-    if (saved === undefined) delete process.env.CYTH_HIGH
-    else process.env.CYTH_HIGH = saved
+    if (saved === undefined) delete process.env.CYTH_HEADER
+    else process.env.CYTH_HEADER = saved
   }
 })
 
@@ -606,9 +617,9 @@ test('verify: detects tampering of every kind', () => {
   has(mkTampered((d) => d.exec("UPDATE nodes SET mh = '" + '00'.repeat(32) + "' WHERE l = 0 AND i = 0")), /node \(0,0\) mh mismatch/)
   has(mkTampered((d) => d.exec("UPDATE nodes SET mh = '" + '00'.repeat(32) + "' WHERE l = 1 AND i = 0")), /node \(1,0\) mh mismatch/)
   has(mkTampered((d) => d.exec('DELETE FROM nodes WHERE l = 0 AND i = 1')), /missing children/)
-  has(mkTampered((d) => d.exec("UPDATE views SET parts = '[]'")), /parts end at 0, viewEnd is 3/)
-  has(mkTampered((d) => d.exec("UPDATE views SET parts = 'garbage'")), /parts is not valid JSON/)
-  has(mkTampered((d) => d.exec("UPDATE views SET parts = '[{\"l\":0,\"i\":0},{\"l\":0,\"i\":1},{\"l\":0,\"i\":2},{\"l\":0,\"i\":3},{\"l\":0,\"i\":4}]', view_end = 5")), /viewEnd 5 > count 4/)
+  has(mkTampered((d) => d.exec('UPDATE views SET view_end = 2')), /viewEnd 2 != tailStart 3/)
+  has(mkTampered((d) => d.exec('UPDATE views SET view_end = 5, tail_start = 5')), /tailStart 5 > count 4/)
+  assert.deepEqual(mkTampered((d) => d.exec("UPDATE views SET parts = 'garbage'")), []) // legacy column, not read
   has(mkTampered((d) => d.exec("UPDATE items SET meta = '{bad' WHERE seq = 1")), /meta is not valid JSON/)
   // ok flag with exactly one problem
   const { s, db } = mk()
@@ -671,20 +682,23 @@ test('summary prompts ask for content and forbid talking about summarizing', () 
   }
 })
 
-test('default view cap is 32768 bytes', async () => {
-  const { HIGH } = await import('../src/util.ts')
-  assert.equal(HIGH, 32768)
+test('default header budget is 8192 bytes of <recent> lines; no tree lines', async () => {
+  const { HEADER } = await import('../src/util.ts')
+  assert.equal(HEADER, 8192)
   const { s } = mk()
-  const saved = process.env.CYTH_HIGH
-  delete process.env.CYTH_HIGH
+  const saved = process.env.CYTH_HEADER
+  delete process.env.CYTH_HEADER
   try {
     s.ingest(Array.from({ length: 400 }, (_, k) => user(long('w' + k, 480), 'sess1', 'h' + k)))
     const v = s.view('claude', 'other')
-    const mem = v.block.slice(v.block.indexOf('<memory>'), v.block.indexOf('</memory>'))
-    assert.ok(bytes(mem) <= 32768, `memory ${bytes(mem)}`)
-    assert.ok(bytes(mem) > 16384 - 600, 'fit lands near HIGH/2, not at the old 96 KB')
+    const rec = recentOf(v.block)
+    const n = rec.reduce((t, l) => t + bytes(l) + 1, 0)
+    assert.ok(n <= 8192, `recent ${n}`)
+    assert.ok(n > 8192 - 600, 'fills the budget up to one line short')
+    assert.ok(v.bytes < 8192 + 3000, `block ${v.bytes} stays small`)
+    assert.doesNotMatch(v.block, /<memory>|#\d+-\d+\|/)
   } finally {
-    if (saved !== undefined) process.env.CYTH_HIGH = saved
+    if (saved !== undefined) process.env.CYTH_HEADER = saved
   }
 })
 

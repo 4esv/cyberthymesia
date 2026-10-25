@@ -7,7 +7,7 @@ export const NODE = 512
 export const PAGE = 20000
 export const PIN_BYTES = 8192
 export const PIN_CLIP = 1024
-export const HIGH = 32 * 1024
+export const HEADER = 8192 // bytes of <recent> lines (SPEC §3)
 export const TAIL = 160 * 1024
 
 export function bytes(s: string): number {

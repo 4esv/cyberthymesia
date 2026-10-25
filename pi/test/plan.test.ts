@@ -36,9 +36,9 @@ const seqs: Seq[] = [0, 1, 2, 3, 4, 6, 6, 7, undefined];
 test("view message first, then the raw tail from tailStart", () => {
 	const cut = chooseCut(msgs, seqs, 4);
 	assert.equal(cut, 4);
-	const out = assemble("<memory>\n#0-3|x\n</memory>", msgs, cut);
+	const out = assemble("<recent>\n#3|x\n</recent>\n", msgs, cut);
 	assert.equal(out[0].role, "user");
-	assert.match((out[0].content as any)[0].text, /^<memory>/);
+	assert.match((out[0].content as any)[0].text, /^<recent>/);
 	assert.equal(out[0].timestamp, 0);
 	assert.deepEqual(out.slice(1), msgs.slice(4));
 });

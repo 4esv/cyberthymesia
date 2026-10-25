@@ -14,10 +14,10 @@ Reuse the pure modules, do not reimplement them:
   piHeader(file), listClaude(dir), listPi(dir). Chunk = {items, raw, open, closed, end, bad}.
 - leaves.ts: ItemRow, leafText(item, tag|null), tag(harness, session), prefix(kind, tag),
   leafModel(pre, summary), mergeClip(a, b), combine(a, b), aggText(meta), leafPrompt, mergePrompt.
-- view.ts: reach, fit, coverage, renderBlock, memBytes, ViewState, Part.
+- view.ts: CONTRACT, recentLines, recentBytes, renderRecent, renderBlock.
 - pins.ts: isDirective, toolKey, pinText, renderPins, PinRow.
 - merkle.ts: leafHash, nodeHash, foldRoots, mthReference, EMPTY.
-- util.ts: NODE, PAGE, HIGH, TAIL, bytes, clipBytes, oneLine, canonical, sha256hex, span,
+- util.ts: NODE, PAGE, HEADER, TAIL, bytes, clipBytes, oneLine, canonical, sha256hex, span,
   refOf, parseRef, roots.
 
 ## Schema (one SQLite file per project)
@@ -34,8 +34,10 @@ transaction (rollback on throw). Never hold a transaction across anything slow.
 - raw(harness, session, uuid, thinking, PRIMARY KEY(harness, session, uuid)), INSERT OR IGNORE.
 - nodes(l, i, text, source, meta TEXT NULL (AggMeta JSON), mh TEXT (hex Merkle hash),
   tries INTEGER DEFAULT 0, PRIMARY KEY(l, i)).
-- views(harness, session, parts TEXT (JSON [{l,i,text}]), view_end, tail_start, high,
-  PRIMARY KEY(harness, session)).
+- views(harness, session, parts TEXT, view_end, tail_start, high,
+  PRIMARY KEY(harness, session)). A view is its tail_start; view_end is written equal to it.
+  `parts` (the old tree view) is written '[]' and never read; `high` records the header
+  budget of the last write and is never read. The columns stay so old stores open.
 - views_log(id INTEGER PRIMARY KEY, ts, harness, session, n, root, view_end, tail_start, sha, bytes).
 - pins(id INTEGER PRIMARY KEY, seq, reason, kind, key NULL, resolved INTEGER DEFAULT 0).
 - forgotten(harness, session, PRIMARY KEY(harness, session)): sessions removed by forgetSession (SPEC §8a); ingest skips them.
@@ -78,17 +80,23 @@ Returns {added, lastSeq: count-1} (-1 when empty).
   transaction: ingest all, raw, calls, cursors. Returns {added}.
 
 ## view / fold
-- High = opts.high ?? env CYTH_HIGH ?? HIGH. A session's high is persisted in views.high.
-- view(h, s, opts): if no views row: create with tailStart = min(opts.tailStart ?? count, count),
-  parts [], viewEnd 0, then reach(tailStart) and fit(high), persist. If the row exists,
-  opts.tailStart is ignored (only fold moves it). If opts.high is given, persist it.
-  Render: block = renderBlock(parts, pinnedBlock) where parts carry their SNAPSHOT text and
-  pinnedBlock = renderPins(open pins oldest first, text = pinText(item)).block.
-  root = hex MTH(viewEnd). bytes = bytes(block). algedonic = renderPins(...).over > 0.
-  Log a views_log row (n = viewEnd) unless the last row for (h, s) has the same sha.
+- header = opts.header ?? env CYTH_HEADER ?? HEADER (positive numbers only, floored). Not
+  persisted as state: the same env gives the same block.
+- view(h, s, opts): if no views row: create with tailStart = clamp(opts.tailStart ?? count,
+  0, count). If the row exists, opts.tailStart is ignored (only fold moves it).
+  Render: block = CONTRACT + '\n\n' + pinnedBlock + '<recent>\n' + lines + '</recent>\n', where
+  pinnedBlock = renderPins(open pins oldest first, text = pinText(item)).block and lines =
+  recentLines(tailStart, header, recentLine). recentLine(seq, first) = `#seq|` +
+  leafText(item, first ? tag(item) : leafTag(seq)).text, rebuilt from the item (never the
+  node text, so a legacy model summary never shows and the line can never change).
+  recentLines walks seq = tailStart-1 down, adds a line while the total (line + '\n' each,
+  the oldest counted with its forced tag) stays <= header, stops at the first that does not
+  fit, and returns them newest last.
+  viewEnd = tailStart. root = hex MTH(viewEnd). bytes = bytes(block). algedonic =
+  renderPins(...).over > 0. Log a views_log row (n = viewEnd) unless the last row for
+  (h, s) has the same sha.
 - fold(h, s, tailStart): create the view as above if absent; new = min(max(tailStart,
-  state.tailStart), count); state.tailStart = new; reach(state, new, textOf);
-  fit(state, high, textOf) (one batch); persist. textOf(l, i) = the node's current text.
+  state.tailStart), count); persist.
 
 ## zoom
 - '#lo-hi': the node must exist (hi < count) else throw. Returns the two child lines
@@ -121,14 +129,15 @@ Returns {added, lastSeq: count-1} (-1 when empty).
 - status(): items, nodes (row count), pending (see below), pins (open count),
   algedonic (renderPins over > 0), root (hex MTH(count)).
 
-## summaries
+## summaries (legacy, off)
+The adapters never call these. They stay so old stores open and old `model` nodes verify.
 - pending(limit): nodes with source 'clip' and tries < 2, ORDER BY l ASC, i DESC.
   Leaf prompt = leafPrompt(item text) (the item's full text); merge = mergePrompt(childA.text,
   childB.text) with current child texts. Returns [{ref: refOf(l,i), prompt}].
 - put(ref, text): t = oneLine(text). Reject (return false) if the ref is not a node, its
   source is det or verbatim, t is empty, bytes(t) > NODE, or t matches META_OUTPUT (leaves.ts). On a reject of a clip/model node
   by length or meta-commentary, increment tries. Accept: leaf → leafModel(prefix(kind, tag-or-null as at
-  build), t); merge → t. source 'model'. Returns true. Never changes snapshots in views.
+  build), t); merge → t. source 'model'. Returns true.
 - forget(ref): a model node goes back to its clip text (leaf: leafText again; merge: mergeClip
   of the children's current texts), source clip, tries 0. Other sources: no-op.
 
@@ -136,8 +145,8 @@ Returns {added, lastSeq: count-1} (-1 when empty).
 Problems (strings) for: an item hash that does not match its recomputed hash; for every
 distinct n in views_log, hex MTH(n) recomputed from recomputed item hashes (mthReference)
 that differs from the logged root; a node text over NODE bytes or containing '\n'; a node
-mh that does not match its children / item; a persisted view whose coverage(parts,
-viewEnd) is non-empty or whose viewEnd > count. ok = problems.length === 0.
+mh that does not match its children / item; a persisted view whose viewEnd != tailStart
+or whose tailStart > count. ok = problems.length === 0.
 
 ## misc
 - tag(harness, session): 'c'/'p' + the LAST 4 alphanumeric characters of the session id

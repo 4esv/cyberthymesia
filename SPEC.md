@@ -1,7 +1,8 @@
 # cyberthymesia — v0 spec
 
 Every chat goes forever. The context window is a cache over a lossless, auditable
-log; the model sees a view whose detail decays with age, and drills down on demand.
+log. The model sees a small fixed header (pins and the newest items) and reaches
+everything else by search and zoom. No model ever summarizes the log.
 
 This file is the contract between `core/`, `claude-code/` and `pi/`. Change it
 first, then the code.
@@ -37,8 +38,7 @@ ref `#i`. Every node text is ≤ `NODE = 512` bytes UTF-8, one line (no `\n`).
 
 Node `source` ∈ `verbatim` | `det` | `model` | `clip`:
 
-- **Leaf, user/assistant:** the text if ≤ NODE (`verbatim`), else `clip` and
-  queued for a model summary.
+- **Leaf, user/assistant:** the text if ≤ NODE (`verbatim`), else `clip`.
 - **Leaf, tool:** deterministic digest (`det`), never a model:
   `t:<Tool> <key arg> → <status>; <n> lines; <first error line | last line>`.
   Key arg per tool: Bash `command`; Read/Edit/Write/NotebookEdit `file_path`
@@ -54,67 +54,68 @@ Node `source` ∈ `verbatim` | `det` | `model` | `clip`:
 - **Merge `(l≥1)`:** if every item under it is a `tool` item, a `det` aggregate
   composed from the children's `meta` (`{tools:{Bash:3,…}, files:[top5], fails, oks}`),
   rendered ≤ NODE. Else `clip` = first ⌊(NODE−5)/2⌋ bytes of each child joined
-  by ` … `, queued for a model summary.
-- A node is built as soon as both children exist. Nodes never wait on a model:
-  `clip` is always there, and a `model` text replaces it later (`put`).
-- `forget(ref)` drops a model summary back to `clip` and re-queues it (OptMem).
+  by ` … `.
+- A node is built as soon as both children exist. The tree serves range zoom
+  (§4), the Merkle audit (§6) and `verify`. It is not what the model sees (§3).
 
-**Model summary prompts** (built by core, run by the adapters on whatever model
-they have):
-
-- leaf: `Write one line of at most 512 bytes that states what this message says: its decisions, facts, names, numbers and paths. State the content itself. Never mention summarizing, lines, the message or what you left out; if little is worth keeping, state its first point plainly. Invent nothing.` + `<input>…</input>`
-- merge: `Write one line of at most 512 bytes that states what these two adjacent lines say together: their decisions, facts, names, numbers and paths. State the content itself. Never mention merging, lines, summaries or what you left out; if little is worth keeping, state the first point plainly. Invent nothing.` + both child lines.
-
-A summary states content; it never talks about summarizing. `put` rejects, as a
-failed try, an empty reply and any reply matching the meta-commentary check
-(`META_OUTPUT` in `core/src/leaves.ts`: "these two lines", "the merged line",
-"this summary", "nothing of lasting …", "lasting effect", …). After two failed
-tries a node keeps its clipped verbatim text.
-
-A reply that is longer than NODE gets one retry with `Too long: N bytes, limit 512. Cut the least valuable items.`, then falls back to `clip`.
+**Legacy: model summaries (off).** Earlier versions had the adapters replace
+`clip` texts with one-line model summaries (`source = model`). The adapters no
+longer ask: a summarized tree in context made models answer "not in the
+history" without searching, and summaries were the dominant cost. Core keeps
+`pending`, `put` and `forget` (and their prompts and checks in `leaves.ts`) so old stores still open and
+their `model` nodes still verify; nothing in the view depends on them.
 
 ## 3. View
 
-The view is uniichat's, persisted per `(project, harness, session)` so its bytes
-stay stable between batches (prompt cache).
+The view is a small fixed header, the same in both harnesses. It is persisted
+per `(project, harness, session)` as one number, `tailStart` (a `seq`), so its
+bytes stay stable between folds (prompt cache).
 
-- `parts`: an ordered list of `{l, i, text}` covering `[0, viewEnd)` exactly,
-  with no gaps or overlaps. `text` is a SNAPSHOT taken when the part entered the
-  view, so the rendered prefix does not change when a summary lands; snapshots
-  refresh only at the next batch.
-- `reach(end)`: append leaves `(0,i)` for `i ∈ [viewEnd, end)`.
-- `fit()`: if `bytes(view) > HIGH`, merge adjacent sibling pairs (`a.l = b.l`,
-  `a.i` even, `b.i = a.i+1`) by highest due score `d = (viewEnd+1)/2^l − i`
-  (oldest relative to its size first), ties to the older, until
-  `bytes ≤ HIGH/2`. One batch per crossing. Merged parts snapshot their current
-  text.
-- **Convergence:** all-merged is the popcount(viewEnd) roots, ≤ 31 × NODE
-  = 15.9 KB < HIGH/2 = 16 KB at the default HIGH = 32 KB, and for any larger HIGH, so `fit` always terminates under budget.
 - **Rendering** (one text block, the order IS the cache layout):
   1. the contract (§7), stable. It travels only inside this block, so a model
-     is told about `<memory>` exactly when `<memory>` is in its context;
-  2. `<memory>` then one line per part, `#ref|text`, then `</memory>`; stable until the next batch;
-  3. `<pinned>` block (§5), changes only when pins change;
-  4. nothing else; the harness appends the raw tail after this block.
-- **Tail.** The view covers the project log up to `tailStart` (a `seq`). After
-  that, the current session's own messages go raw, as the harness has them.
-  Items from other sessions after `tailStart` join the view at the next fold.
+     is told about `<recent>` exactly when `<recent>` is in its context;
+  2. the `<pinned>` block (§5), which changes only when pins change;
+  3. `<recent>`, one line per item, then `</recent>`. The lines are the newest
+     items before `tailStart`, from any session, newest last. A line is
+     `#n|` + the item's leaf text (§2), rebuilt from the item itself (a legacy
+     model summary is not used). The tag `@c1234` / `@p1234` appears where the
+     session changes from the item before, and always on the oldest line shown.
+     Lines are added newest first while their bytes (each line plus its `\n`)
+     stay ≤ `HEADER`, whole lines only; the first line that does not fit stops
+     the walk, so the slice is contiguous and ends at `tailStart − 1`;
+  4. nothing else: no tree lines. The harness appends the raw tail after this block.
+- **Deterministic.** The block is a function of the items before `tailStart`,
+  the open pins and `HEADER`. Items are append-only, so while only the tail
+  grows (and pins do not change) the block is byte-identical.
+- **Tail.** After `tailStart`, the current session's own messages go raw, as the
+  harness has them. Items from other sessions after `tailStart` reach
+  `<recent>` at the next fold, and `memory_find` at once.
 - **Fold.** When the raw tail exceeds `TAIL` bytes, move `tailStart` forward to
-  a user-message boundary that leaves about `TAIL/2` raw (never between a tool call
-  and its result), then `reach(tailStart)` and `fit()`.
-- Defaults: `HIGH = 32 KB` (32768 bytes of `<memory>` lines, ≈ 9k tokens), `TAIL = 160 KB` (≈ 45k tokens). Per-harness
-  overrides in env `CYTH_HIGH`, `CYTH_TAIL`.
+  a user-message boundary that leaves about `TAIL/2` raw (never between a tool
+  call and its result). Folds never move `tailStart` back.
+- `viewEnd` (in results and `views_log`) equals `tailStart`: the log the view
+  stands for is `[0, tailStart)`, all of it reachable by search.
+- Defaults: `HEADER = 8192` bytes of `<recent>` lines (≈ 2k tokens),
+  `TAIL = 160 KB` (≈ 45k tokens). Overrides in env `CYTH_HEADER`, `CYTH_TAIL`;
+  `view(…, {header})` overrides per call.
+- Why (bench, branch `bench/memory`, LongMemEval pilot + held-out): with a
+  compressed tree in context, the model answered "not in the history" without
+  searching 20-28% of the time, and was 10-18 points less accurate than plain
+  find/zoom. A header of pins + recent items matched or beat the tree at the
+  same budget, and context stayed flat (~4.5k tokens) over a 2.26M-token replay.
 
 ## 4. Search and zoom
 
-- `zoom('#lo-hi')` → the two child lines (`#ref|text`, current text, not snapshot).
+- `zoom('#lo-hi')` → the two child lines (`#ref|text`, current text). A range
+  must be aligned (hi−lo+1 a power of two, lo a multiple of it); otherwise core
+  throws a message saying so, and both adapters return that message to the model.
 - `zoom('#n')` → item n whole: kind, session, ts, text (tool: input + output),
   paged at `PAGE = 20000` bytes; `zoom('#n@offset')` continues; every page ends
   with a footer saying whether more remains and how to get it (OptMem).
 - `search(q, {regex?, limit=20})` → `#n|leaf text` + a snippet per hit.
   Default FTS5: bm25 picks the best `limit` hits, which are then listed newest
   first (by `seq`, descending); `regex` scans newest first, capped by PAGE.
-- `roots()` → the tree's roots, for orientation.
+- `roots()` → the tree's roots, for orientation (not shown to the model).
 
 ## 5. Algedonic channel (pins)
 
@@ -155,38 +156,42 @@ A bypass that never decays. A pin shows its item verbatim (clipped to 1024 B) in
   "What did the model see at turn N" is replayable from that row.
 - `verify()`: recompute every item hash from stored fields; recompute the MTH for
   every `n` in `views_log` and compare (that is the append-only consistency
-  check); check every node text ≤ NODE and every persisted view covers
-  `[0,viewEnd)` exactly. Non-zero exit on any failure.
+  check); check every node text ≤ NODE and every persisted view has
+  `viewEnd = tailStart ≤ count`. Non-zero exit on any failure.
 
 ## 7. Contract (the head of the view block, both harnesses)
 
 Every sentence in it must be true of what the model has in front of it, in
 both harnesses. It is rendered by core at the head of the view block (§3), not
 put in the system prompt: if the view cannot be built, the model gets neither
-the tree nor a description of one.
+the header nor a description of one. Its job is behaviour: the log is complete
+and cheap to search, so the model must search before it claims absence and
+never asks the user to re-supply what the log holds.
 
 ```
 ## Memory: cyberthymesia
-This project keeps one log of every session, Claude Code and Pi alike: each user
-message, assistant reply and tool call, verbatim. <memory> shows that log as a
-binary tree, oldest first, one line per node: `#a-b|...` covers items a..b,
-`#n|...` is item n. Lines start u: (user), a: (assistant) or t: (tool);
-@c1234 / @p1234 marks a switch to another Claude Code or Pi session. Older
-history is merged into fewer, coarser lines. A line with … in it is clipped
-text still waiting for its one-line summary. The messages after this block are
-the recent part of this session, verbatim. The block was built when this
-conversation started or last compacted; memory_find and memory_pins read the
-log as it is now.
-- The latest word on a thing is the truth. Before you act on, guess at or ask
-  about anything past, find it in <memory> and zoom until you have it whole.
-- memory_zoom(ref): #a-b gives its two halves; #n gives item n whole (paged: #n@offset).
+This project keeps a full log of every session, Claude Code and Pi alike. The log
+holds each user message, assistant reply and tool call, verbatim. Searching it
+is cheap.
+<recent> is only the latest slice of that log, not the history. Older items are
+not shown here, but they are in the log.
+Each <recent> line is one item, oldest first: `#n|` then u: (user), a: (assistant)
+or t: (tool). @c1234 or @p1234 names the Claude Code or Pi session where it changes.
+A line ending in … is clipped. A tool line is a digest of the call.
+The messages after this block are the recent part of this session, verbatim.
+This block was built when this conversation started or last compacted. The tools
+read the log as it is now.
+- Before you say something is absent, unknown or not discussed, call memory_find.
+  Try at least two phrasings.
+- Never ask the user to repeat context the log may hold. Find it instead.
+- The latest word on a thing is the truth.
 - memory_find(query): full-text search over every item, newest first.
+- memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
+  Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
-- <pinned> holds user directives and unresolved tool failures, flagged
-  automatically or pinned by hand, verbatim (first 1 KB) whatever their age.
-  Follow them; if one is resolved or was flagged by mistake, say so and unpin it.
-- Tool output survives here only as one-line digests: say in your reply what
-  you learned that matters later.
+- <pinned> holds user directives and unresolved tool failures, verbatim (first 1 KB)
+  whatever their age. Follow them. If one is resolved or was flagged by mistake,
+  say so and unpin it.
 ```
 
 ## 8. Core API (`core/src/index.ts`, Node ≥ 22, `node:sqlite`, zero deps)
@@ -204,15 +209,15 @@ interface Store {
   syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number }
   backfill(opts: { claudeDir?: string; piDir?: string }): { added: number } // this project's sessions, merged by ts
   seqOf(harness, session, uuid): number | undefined
-  view(harness, session, opts?: { high?: number; tail?: number; tailStart?: number }): {
+  view(harness, session, opts?: { header?: number; tail?: number; tailStart?: number }): {
     block: string; viewEnd: number; tailStart: number; bytes: number; root: string; algedonic: boolean }
-  fold(harness, session, tailStart: number): void   // advance tailStart, reach, fit
+  fold(harness, session, tailStart: number): void   // advance tailStart (forward only)
   zoom(ref: string): string
   search(q: string, opts?: { regex?: boolean; limit?: number }): string
   pin(ref: string, reason: string): number; unpin(id: number): void; pins(): string
-  pending(limit: number): { ref: string; prompt: string }[]
-  put(ref: string, text: string): boolean            // model summary, validated ≤ NODE
-  forget(ref: string): void
+  pending(limit: number): { ref: string; prompt: string }[]  // legacy (§2): unused by adapters
+  put(ref: string, text: string): boolean            // legacy model summary, validated ≤ NODE
+  forget(ref: string): void                          // legacy
   forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan  // §8a
   status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string }
   verify(): { ok: boolean; problems: string[] }
@@ -238,7 +243,7 @@ or a leaf tag like `p1be2`; ambiguity is an error) from a store, consistently,
 in one transaction: its items, FTS rows, `raw` and pending `calls` rows, its
 ingest cursors (files whose path holds the session id), and the pins on its
 items. The log stays dense, so the remaining items are renumbered `0..n-1`,
-re-hashed and the whole tree rebuilt (model summaries re-queue as clips); manual
+re-hashed and the whole tree rebuilt (legacy model summaries become clips); manual
 and surviving auto pins follow their items (same ids); every `views` row and the
 `views_log` are cleared, because their seqs and roots no longer hold. The
 session goes into `forgotten`, so a later sync, backfill or ingest of it adds
@@ -249,14 +254,15 @@ calls, pins, views, cursors, remaining) and changes nothing.
 
 Both: **fail open.** Any error in cyberthymesia → the harness's native
 behaviour, plus a status line saying so. `CYTH_DISABLE=1` → pass-through.
-Summaries: at session start and after each turn, drain `pending(4)` batches on
-the cheapest model available, in the background, never blocking a turn: up to
-8 batches, stopping early when nothing is pending or a batch lands nothing
-(one batch per turn falls behind, since a turn adds several clip nodes). Tools:
-`memory_zoom`, `memory_find`, `memory_pin`, `memory_unpin`, `memory_pins`
-(thin calls into core). The view block, contract included, reaches the model
-from the first model call of every session; a new session in a project with
-history sees that history at once.
+**No model calls:** neither adapter asks a model for anything (no summaries,
+no `pending`/`put`). Tools: `memory_zoom`, `memory_find`, `memory_pin`,
+`memory_unpin`, `memory_pins` (thin calls into core). A core error in a tool
+reaches the model as `<tool>: <core's message>` (an error result), never a bare
+"failed". The status line shows items and pins. Both adapters have identical
+semantics: the same core `view` block (§3), rendered for the first model call
+of every session and again after every fold or compaction; a new session in a
+project with history sees its pins and newest items at once, and the rest by
+search.
 
 - **claude-code/** (a Claude Code mod; no Node in the module, so core is reached
   through `$.process.run` of the CLI). Ingest: `sync-claude` on the session's
@@ -280,15 +286,18 @@ history sees that history at once.
 - **pi/** (a Pi extension; imports core directly). Ingest at `message_end`
   (or `syncPi` on the session file). `context` hook: replace everything before
   the tail with one user message carrying the view block; fold when the tail
-  passes TAIL. `session_before_compact`: return our compaction (or cancel) so Pi's
+  passes TAIL. `CYTH_HEADER` is passed to `view` as `{header}`. `session_before_compact`: return our compaction (or cancel) so Pi's
   summarizer never runs.
 
 ## 10. Tests (core, `node --test`)
 
 Seeded PRNG property tests over random item streams (mixed kinds, sizes,
 sessions, failures):
-1. View covers `[0, viewEnd)` exactly, in order, after any sequence of reach/fit/fold.
-2. After `fit`, `bytes ≤ HIGH` (convergence bound holds).
+1. `<recent>` is whole leaf lines (each exactly `#n|` + the leaf text of §3),
+   newest last, contiguous, ending at `tailStart − 1`, never an item ≥ `tailStart`;
+   no `<memory>` section.
+2. `<recent>` lines total ≤ `HEADER` bytes, and the next older line would not fit.
+   The block is byte-identical between folds while only the tail grows.
 3. Every node text ≤ NODE bytes, one line.
 4. Re-ingest is a no-op; item count and root unchanged.
 5. Merkle: MTH matches a reference implementation; appending never changes the

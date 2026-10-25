@@ -41,7 +41,7 @@ const MESSAGES = [u('first prompt', 'h0'), a('first answer', 'h1'), u('second pr
 const goodCli: Cli = argv => {
   const s = sub(argv)
   if (s === 'seq') return { exitCode: 0, stdout: '7' }
-  if (s === 'view') return { exitCode: 0, stdout: JSON.stringify({ block: '<memory>VIEWBLOCK</memory>' }) }
+  if (s === 'view') return { exitCode: 0, stdout: JSON.stringify({ block: '<recent>VIEWBLOCK</recent>' }) }
   if (s === 'status') return { exitCode: 0, stdout: JSON.stringify({ items: 3, pending: 1, pins: 2 }) }
   if (s === 'pending') return { exitCode: 0, stdout: '[]' }
   return { exitCode: 0, stdout: '{}' }
@@ -60,7 +60,7 @@ test('turn.complete syncs the transcript through the CLI', async ($, on) => {
   const sync = w.runs.find(x => x.argv.includes('sync-claude'))
   expect(sync?.argv).toEqual(['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'sync-claude', `/cfg/projects/-w/${SID}.jsonl`])
   // status line shown after ingest
-  expect(w.statuses).toContain('cyth 3 items · 1 pending · 2 pins')
+  expect(w.statuses).toContain('cyth 3 items · 2 pins')
 })
 
 test('turn.complete uses the transcript path a Stop event carried', async ($, on) => {
@@ -127,7 +127,7 @@ test('session.compact folds, answers the kept tail and re-asks prompt.context fo
   expect(cands).not.toContain('h1')
   expect(argvOf('seq').at(-3)).toBe(CWD)
   expect(argvOf('seq').at(-2)).toBe(SID)
-  expect(w.statuses.at(-1)).toBe('cyth 3 items · 1 pending · 2 pins')
+  expect(w.statuses.at(-1)).toBe('cyth 3 items · 2 pins')
 })
 
 test('session.compact keys a subagent store by session/agent', async ($, on) => {
@@ -239,7 +239,7 @@ test('session.start registers the five memory tools and shows status', async ($,
   })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
   expect(names).toEqual(['memory_zoom', 'memory_find', 'memory_pin', 'memory_unpin', 'memory_pins'])
-  expect(w.statuses).toContain('cyth 3 items · 1 pending · 2 pins')
+  expect(w.statuses).toContain('cyth 3 items · 2 pins')
 })
 
 test('status line flags an algedonic alarm', async ($, on) => {
@@ -247,7 +247,7 @@ test('status line flags an algedonic alarm', async ($, on) => {
   on('session.start', () => ({ cwd: CWD }) as never)
   on('tool.register', () => ({ value: { name: 'x' } as never }))
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
-  expect(w.statuses.at(-1)).toBe('cyth 1 items · 0 pending · 1 pins · ALGEDONIC: review with memory_pins')
+  expect(w.statuses.at(-1)).toBe('cyth 1 items · 1 pins · ALGEDONIC: review with memory_pins')
 })
 
 const toolCli: Cli = argv => ({ exitCode: 0, stdout: JSON.stringify({ text: `ran ${argv.slice(7).join(' ')}` }) })
@@ -290,7 +290,7 @@ test('a failing CLI denies the tool call with the reason', async ($, on) => {
   world(on, { cli: () => ({ exitCode: 1, stderr: 'no such ref' }) })
   on('tool.call', () => ({ result: 'native' }))
   const r = await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'x' } as never)
-  expect(JSON.stringify(r)).toContain('memory_find: cyth search exited 1: no such ref')
+  expect(r).toEqual({ deny: 'memory_find: no such ref' }) // core's message, not the CLI wrapper
   expect(JSON.stringify(r)).not.toContain('native')
 })
 
@@ -314,7 +314,7 @@ test('prompt.context adds the view block after the engine blocks, from the first
   const w = world(on, { cli: goodCli })
   on('prompt.context', () => ({ blocks: [{ name: 'claudeMd', text: 'md' }] }) as never)
   const r = await $.prompt.context({ blocks: [] } as never)
-  expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'md' }, { name: 'cyberthymesia', text: '<memory>VIEWBLOCK</memory>' }])
+  expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'md' }, { name: 'cyberthymesia', text: '<recent>VIEWBLOCK</recent>' }])
   expect(w.runs.map(x => x.argv)).toEqual([['node', BIN, '--cwd', CWD, '--session', `claude:${SID}`, '--json', 'view', 'claude', SID]])
 })
 
@@ -340,94 +340,30 @@ test('the mod no longer adds a system-prompt section of its own', async ($, on) 
   expect(p.sections.map(x => x.id)).toEqual(['base'])
 })
 
-/** A CLI with `left` pending jobs; each put lands and removes one. */
-function backlogCli(left: number, putOk = true): { cli: Cli; puts: () => number } {
-  let puts = 0
-  const cli: Cli = argv => {
-    const s = sub(argv)
-    if (s === 'pending') {
-      const n = Math.min(Number(argv[9] ?? 4), left)
-      return { exitCode: 0, stdout: JSON.stringify(Array.from({ length: n }, (_, k) => ({ ref: `#${k}`, prompt: `p${k}` }))) }
-    }
-    if (s === 'put') {
-      puts++
-      if (putOk) left--
-      return { exitCode: 0, stdout: JSON.stringify({ ok: putOk }) }
-    }
-    return goodCli(argv)
-  }
-  return { cli, puts: () => puts }
-}
+test('memory_zoom: a core error reaches the model as core worded it', async ($, on) => {
+  const hint = 'bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it'
+  world(on, { cli: () => ({ exitCode: 1, stderr: hint + '\n' }) })
+  on('tool.call', () => ({ result: 'native' }))
+  const r = await $.tool.call({ tool: 'mcp__cyberthymesia__memory_zoom', ref: '#3-9' } as never)
+  expect(r).toEqual({ deny: `memory_zoom: ${hint}` })
+})
 
-test('summaries drain the backlog in rounds after a turn, on the cheap model', async ($, on) => {
+test('no summaries: a turn and a session start never ask a model, pending or put', async ($, on) => {
   const clock = mock.clock(on)
-  const b = backlogCli(10)
-  world(on, { cli: b.cli })
-  const models: string[] = []
-  on('model.complete', (_, e) => {
-    models.push((e as { model: string }).model)
-    return { value: { isAnswered: true, text: 'a short summary' } } as never
+  const w = world(on, { cli: goodCli })
+  let asked = 0
+  on('model.complete', () => {
+    asked++
+    return { value: { isAnswered: true, text: 'x' } } as never
   })
   on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
   on('turn.complete', () => ({ text: 'done' }))
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
-  await clock.advance(5000)
-  expect(b.puts()).toBe(10)
-  expect(new Set(models)).toEqual(new Set(['haiku']))
-})
-
-test('summaries: an empty answer is not put, and asks at low effort with room to answer', async ($, on) => {
-  const clock = mock.clock(on)
-  const b = backlogCli(10)
-  world(on, { cli: b.cli })
-  const asks: { effort?: string; maxTokens?: number }[] = []
-  on('model.complete', (_, e) => {
-    asks.push(e as never)
-    return { value: { isAnswered: true, text: '  ' } } as never
-  })
-  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
-  on('turn.complete', () => ({ text: 'done' }))
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
-  await clock.advance(5000)
-  expect(b.puts()).toBe(0)
-  expect(asks.length).toBe(4)
-  expect(asks[0]!.effort).toBe('low')
-  expect(asks[0]!.maxTokens).toBe(1024)
-})
-
-test('summaries stop after a round that lands nothing', async ($, on) => {
-  const clock = mock.clock(on)
-  const b = backlogCli(10, false)
-  world(on, { cli: b.cli })
-  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
-  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
-  on('turn.complete', () => ({ text: 'done' }))
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
-  await clock.advance(5000)
-  expect(b.puts()).toBe(4)
-})
-
-test('summaries stop at the round cap', async ($, on) => {
-  const clock = mock.clock(on)
-  const b = backlogCli(1000)
-  world(on, { cli: b.cli })
-  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
-  on('session.usage', () => ({ value: { context: { tokens: 10 } } as never }))
-  on('turn.complete', () => ({ text: 'done' }))
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
-  await clock.advance(5000)
-  expect(b.puts()).toBe(32)
-})
-
-test('session.start drains the backlog in the background', async ($, on) => {
-  const clock = mock.clock(on)
-  const b = backlogCli(6)
-  world(on, { cli: b.cli })
-  on('model.complete', () => ({ value: { isAnswered: true, text: 'x' } }) as never)
   on('session.start', () => ({ cwd: CWD }) as never)
   on('tool.register', () => ({ value: { name: 'x' } as never }))
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
-  expect(b.puts()).toBe(0)
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
   await clock.advance(5000)
-  expect(b.puts()).toBe(6)
+  expect(asked).toBe(0)
+  expect(w.runs.filter(x => ['pending', 'put'].includes(sub(x.argv)))).toEqual([])
+  expect(w.runs.some(x => sub(x.argv) === 'sync-claude')).toBe(true)
 })

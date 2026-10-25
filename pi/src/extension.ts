@@ -6,14 +6,15 @@
 //             When the tail passes TAIL, fold at a user message (never inside a tool pair).
 //  compact    session_before_compact returns OUR compaction (view block as the summary,
 //             first tail entry kept): Pi's summarizer never runs, and an overflow still retries.
-//  tools      memory_zoom / memory_find / memory_pin / memory_unpin / memory_pins.
-//  summaries  agent_end and session_start: pending(N) -> cheapest model -> put, in rounds until
-//             nothing is pending, a round lands nothing, or ROUNDS batches ran. Background.
+//  tools      memory_zoom / memory_find / memory_pin / memory_unpin / memory_pins. A core
+//             error comes back as an error result carrying core's message.
+//  no model   the view is a fixed header (pins + newest items) over search: no summaries are
+//             asked for (core's pending/put stay for old stores, unused here).
 //  fail open  any error -> the hook returns nothing (Pi's native context) + one notify.
 //             CYTH_DISABLE=1 -> nothing is registered beyond a status line.
 //
 // No runtime import of @earendil-works/*: the host API is described structurally (as
-// compact-bash.ts / fleet-bar.ts do), and model calls go through ctx.modelRegistry.
+// compact-bash.ts / fleet-bar.ts do).
 
 import { existsSync } from "node:fs";
 import { assemble, bytesFrom, chooseCut, chooseFold, plan, toolCallIds, blocks, type Msg, type Seq } from "./plan.ts";
@@ -26,15 +27,13 @@ export type Store = {
 	dbPath: string;
 	syncPi(sessionPath: string, opts?: { oneShot?: boolean }): { added: number };
 	seqOf(harness: string, session: string, uuid: string): number | undefined;
-	view(harness: string, session: string, opts?: { high?: number; tail?: number; tailStart?: number }): View;
+	view(harness: string, session: string, opts?: { header?: number; tail?: number; tailStart?: number }): View;
 	fold(harness: string, session: string, tailStart: number): void;
 	zoom(ref: string): string;
 	search(q: string, opts?: { regex?: boolean; limit?: number }): string;
 	pin(ref: string, reason: string): number;
 	unpin(id: number): void;
 	pins(): string;
-	pending(limit: number): { ref: string; prompt: string }[];
-	put(ref: string, text: string): boolean;
 	status(): { items: number; nodes: number; pending: number; pins: number; algedonic: boolean; root: string };
 	close(): void;
 };
@@ -43,21 +42,13 @@ export type Core = { openStore(cwd: string, opts?: { home?: string; session?: { 
 // ---- Pi host, structurally ---------------------------------------------------------------------
 
 type Entry = { type: string; id: string; message?: Msg };
-type Model = { provider: string; id: string; api?: string; cost?: { input?: number; output?: number }; input?: string[] };
 type Ctx = {
 	cwd: string;
 	hasUI?: boolean;
 	ui?: { notify?: (msg: string, level: string) => void; setStatus?: (key: string, text: string | undefined) => void };
-	model?: Model;
-	modelRegistry?: {
-		find?(provider: string, id: string): Model | undefined;
-		getAvailable?(): Model[];
-		complete?(model: Model, context: unknown, options?: unknown): Promise<{ content?: Block[]; stopReason?: string; errorMessage?: string }>;
-	};
 	sessionManager: { getSessionId(): string; getSessionFile(): string | undefined; getBranch(): Entry[] };
 };
-type Block = { type: string; text?: string };
-type ToolResult = { content: { type: "text"; text: string }[]; details: unknown };
+type ToolResult = { content: { type: "text"; text: string }[]; details: unknown; isError?: boolean };
 type Tool = {
 	name: string; label: string; description: string; promptSnippet?: string; parameters: unknown;
 	execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, ctx: Ctx): Promise<ToolResult>;
@@ -70,13 +61,10 @@ export type Pi = {
 // ---- constants -----------------------------------------------------------------------------------
 
 export const HARNESS = "pi";
-const NODE = 512;
 const STATUS_KEY = "cyth";
 
 // The contract (SPEC §7) is rendered by core at the head of the view block, so the model is
-// told about <memory> only on a call where <memory> is there. No system-prompt copy.
-
-const SUMMARY_SYSTEM = "You compress conversation records into one line. Output only that line.";
+// told about <recent> only on a call where <recent> is there. No system-prompt copy.
 
 type Env = Record<string, string | undefined>;
 const num = (v: string | undefined) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : undefined);
@@ -91,10 +79,8 @@ export function piUuid(entryId: string, block: number): string {
 export function createExtension(pi: Pi, deps: Deps): void {
 	const env = deps.env ?? process.env;
 	const disabled = env.CYTH_DISABLE === "1";
-	const high = num(env.CYTH_HIGH);
+	const header = num(env.CYTH_HEADER);
 	const tail = num(env.CYTH_TAIL) ?? 160 * 1024;
-	const batch = num(env.CYTH_SUMMARY_BATCH) ?? 4;
-	const rounds = 8; // batches per drain: one batch per turn falls behind the clips a turn adds
 	const home = env.CYTH_HOME || undefined;
 
 	const status = (ctx: Ctx, text: string | undefined) => {
@@ -110,8 +96,6 @@ export function createExtension(pi: Pi, deps: Deps): void {
 	let storeCwd = "";
 	let notified = false;
 	let algedonicNotified = false;
-	let summarizing = false;
-	const failedRefs = new Set<string>();
 	const seqCache = new Map<string, number>(); // `${session}\0${uuid}` -> seq; seqs never change
 
 	// A session stays in the store it first used (core records it), wherever ctx.cwd moves.
@@ -140,7 +124,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 
 	const showStatus = (ctx: Ctx, s: Store) => {
 		const st = s.status();
-		status(ctx, `${st.algedonic ? "ALGEDONIC · " : ""}cyth ${st.items} items · ${st.pending} pending · ${st.pins} pins`);
+		status(ctx, `${st.algedonic ? "ALGEDONIC · " : ""}cyth ${st.items} items · ${st.pins} pins`);
 		if (st.algedonic && !algedonicNotified) {
 			algedonicNotified = true;
 			try { ctx.ui?.notify?.("cyberthymesia: ALGEDONIC: pins over quota; review with memory_pins", "warning"); } catch { /* ignore */ }
@@ -179,7 +163,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		return (m: Msg) => byKey.get(`${m.role}\0${m.timestamp}`);
 	};
 
-	const viewOpts = () => ({ ...(high ? { high } : {}), tail });
+	const viewOpts = () => ({ ...(header ? { header } : {}), tail });
 
 	// ---- context: the view replaces history before every model call ----------------------------
 
@@ -251,7 +235,7 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		}
 	});
 
-	// ---- after each agent run: ingest, status, background summaries ------------------------------
+	// ---- after each agent run: ingest, status ----------------------------------------------------
 
 	pi.on("agent_end", (_e, ctx) => {
 		try {
@@ -259,7 +243,6 @@ export function createExtension(pi: Pi, deps: Deps): void {
 			const s = getStore(ctx.cwd, sidOf(ctx));
 			sync(s, ctx);
 			showStatus(ctx, s);
-			void summarize(ctx, s);
 		} catch (err) {
 			failOpen(ctx, "ingest", err);
 		}
@@ -270,7 +253,6 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		try {
 			const s = getStore(ctx.cwd, sidOf(ctx));
 			showStatus(ctx, s);
-			void summarize(ctx, s); // the backlog other sessions left
 		} catch (err) { failOpen(ctx, "open", err); }
 	});
 
@@ -278,82 +260,6 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		try { store?.close(); } catch { /* ignore */ }
 		store = undefined;
 	});
-
-	// ---- summaries -------------------------------------------------------------------------------
-	// Model pick and the fallback chain follow pi-lcm's callCompactionModel (MIT,
-	// github.com/codexstar69/pi-lcm, src/index.ts): configured model first, then the session model.
-	// Here: CYTH_SUMMARY_MODEL=provider/id, else the cheapest available model of the session's
-	// provider (never another provider: no surprise bills), else the session model.
-
-	const pickModels = (ctx: Ctx): Model[] => {
-		const out: Model[] = [];
-		const reg = ctx.modelRegistry;
-		const want = env.CYTH_SUMMARY_MODEL;
-		if (want && want.includes("/")) {
-			const [prov, ...rest] = want.split("/");
-			const m = reg?.find?.(prov, rest.join("/"));
-			if (m) out.push(m);
-		}
-		if (ctx.model) {
-			const cost = (m: Model) => (m.cost?.input ?? Infinity) + (m.cost?.output ?? Infinity);
-			let avail: Model[] = [];
-			try { avail = reg?.getAvailable?.() ?? []; } catch { /* ignore */ }
-			const same = avail.filter((m) => m.provider === ctx.model!.provider && (!m.input || m.input.includes("text"))).sort((a, b) => cost(a) - cost(b));
-			if (same[0]) out.push(same[0]);
-			out.push(ctx.model);
-		}
-		return out.filter((m, i) => out.findIndex((o) => o.provider === m.provider && o.id === m.id) === i);
-	};
-
-	const ask = async (ctx: Ctx, models: Model[], prompt: string): Promise<string | undefined> => {
-		for (const model of models) {
-			try {
-				const r = await ctx.modelRegistry!.complete!(model, {
-					systemPrompt: SUMMARY_SYSTEM,
-					messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
-				}, { maxTokens: 1024, signal: AbortSignal.timeout(60_000) });
-				if (r.stopReason === "error" || r.stopReason === "aborted") continue;
-				const text = (r.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join(" ").replace(/\s+/g, " ").trim();
-				if (text) return text;
-			} catch { /* next model */ }
-		}
-		return undefined;
-	};
-
-	const summarize = async (ctx: Ctx, s: Store) => {
-		if (summarizing || !ctx.modelRegistry?.complete) return;
-		summarizing = true;
-		try {
-			const models = pickModels(ctx);
-			if (!models.length) return;
-			for (let round = 0; round < rounds; round++) {
-			const jobs = s.pending(batch + failedRefs.size).filter((j) => !failedRefs.has(j.ref)).slice(0, batch);
-			if (!jobs.length) break;
-			let landed = 0;
-			for (const job of jobs) {
-				let text = await ask(ctx, models, job.prompt);
-				if (text && Buffer.byteLength(text) > NODE) {
-					const n = Buffer.byteLength(text);
-					text = await ask(ctx, models, `${job.prompt}\n\nYour answer was:\n${text}\n\nToo long: ${n} bytes, limit 512. Cut the least valuable items.`);
-				}
-				// Over NODE twice, or rejected: the clip stays (SPEC §2), and we stop asking this run.
-				let ok = false;
-				if (text && Buffer.byteLength(text) <= NODE) {
-					try { ok = s === store && s.put(job.ref, text); } catch { ok = false; }
-				}
-				if (!ok) failedRefs.add(job.ref);
-				else landed++;
-				if (s !== store) return; // session ended or cwd changed mid-batch
-			}
-			showStatus(ctx, s);
-			if (!landed) break;
-			}
-		} catch {
-			/* background: never surfaces */
-		} finally {
-			summarizing = false;
-		}
-	};
 
 	// ---- tools -----------------------------------------------------------------------------------
 
@@ -363,13 +269,15 @@ export function createExtension(pi: Pi, deps: Deps): void {
 		pi.registerTool!({
 			name, label: name, description, parameters, promptSnippet: description,
 			async execute(_id, params, _signal, _u, ctx) {
-				return text(run(getStore(ctx.cwd, sidOf(ctx)), params ?? {})); // throws -> Pi reports an error result
+				// A core error (a bad ref, an unaligned range) reaches the model as core worded it.
+				try { return text(run(getStore(ctx.cwd, sidOf(ctx)), params ?? {})); }
+				catch (err) { return { ...text(`${name}: ${err instanceof Error ? err.message : String(err)}`), isError: true }; }
 			},
 		});
 	const str = (description: string) => ({ type: "string", description });
 
-	tool("memory_zoom", "Open a memory ref: #a-b gives its two halves; #n gives item n whole, paged (#n@offset continues).",
-		{ type: "object", properties: { ref: str("A ref from <memory>, e.g. #0-15, #7, #7@20000") }, required: ["ref"] },
+	tool("memory_zoom", "Open a memory ref: #n gives item n whole, paged (#n@offset continues); an aligned range #a-b gives its two halves.",
+		{ type: "object", properties: { ref: str("An item ref from <recent> or memory_find, e.g. #7 or #7@20000") }, required: ["ref"] },
 		(s, p) => s.zoom(String(p.ref)));
 	tool("memory_find", "Full-text search over every item of the project's history, verbatim, newest first.",
 		{ type: "object", properties: {

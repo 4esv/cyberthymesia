@@ -1,7 +1,8 @@
 // cyberthymesia core store (SPEC §8): one SQLite file per project holding an
-// append-only, hashed log of every chat, rendered as a decaying binary-tree
-// view with full-text search, item zoom, an algedonic pin channel and a
-// replayable audit log. Built on node:sqlite (DatabaseSync) with zero deps.
+// append-only, hashed log of every chat, shown to the model as a small fixed
+// header (pins + the newest items) over full-text search and item zoom, with
+// an algedonic pin channel, a Merkle tree over the log and a replayable audit
+// log. Built on node:sqlite (DatabaseSync) with zero deps.
 
 import { sessionRoot } from './sessions.ts'
 import type { SessionId } from './sessions.ts'
@@ -16,12 +17,11 @@ import {
   leafText, prefix, tag, mergeClip, combine, aggText, leafModel, leafPrompt, mergePrompt,
 } from './leaves.ts'
 import type { ItemRow, AggMeta } from './leaves.ts'
-import { reach, fit, coverage, renderBlock } from './view.ts'
-import type { ViewState } from './view.ts'
+import { recentLines, renderBlock } from './view.ts'
 import { isDirective, toolKey, pinText, renderPins } from './pins.ts'
 import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
 import { META_OUTPUT } from './leaves.ts'
-import { NODE, PAGE, HIGH, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
+import { NODE, PAGE, HEADER, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
 import type { NormItem, Store, ForgetPlan } from './types.ts'
 
 function schema(db: DatabaseSync): void {
@@ -284,34 +284,39 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     db.prepare('DELETE FROM calls WHERE harness = ? AND session = ? AND id = ?').run(c.harness, c.session, c.id)
   }
 
-  const loadView = (h: string, s: string): (ViewState & { high: number }) | null => {
-    const r = db.prepare('SELECT parts, view_end, tail_start, high FROM views WHERE harness = ? AND session = ?').get(h, s)
-    if (!r) return null
-    return { parts: safeParse(r.parts) ?? [], viewEnd: r.view_end, tailStart: r.tail_start, high: r.high }
+  // A session's view is its tailStart (SPEC §3). The views table keeps its
+  // old columns so old stores still open: `parts` is written empty and never
+  // read, `high` holds the header budget the row was last rendered with.
+  const loadView = (h: string, s: string): { tailStart: number } | null => {
+    const r = db.prepare('SELECT tail_start FROM views WHERE harness = ? AND session = ?').get(h, s)
+    return r ? { tailStart: Number(r.tail_start) } : null
   }
-  const persistView = (h: string, s: string, st: ViewState & { high: number }): void => {
-    db.prepare('INSERT INTO views (harness, session, parts, view_end, tail_start, high) VALUES (?,?,?,?,?,?) ON CONFLICT(harness, session) DO UPDATE SET parts = excluded.parts, view_end = excluded.view_end, tail_start = excluded.tail_start, high = excluded.high')
-      .run(h, s, JSON.stringify(st.parts), st.viewEnd, st.tailStart, st.high)
+  const persistView = (h: string, s: string, tailStart: number, header: number): void => {
+    db.prepare("INSERT INTO views (harness, session, parts, view_end, tail_start, high) VALUES (?,?,'[]',?,?,?) ON CONFLICT(harness, session) DO UPDATE SET parts = '[]', view_end = excluded.view_end, tail_start = excluded.tail_start, high = excluded.high")
+      .run(h, s, tailStart, tailStart, header)
   }
 
-  const resolveHigh = (h?: number): number => {
-    if (h !== undefined && Number.isFinite(h) && h > 0) return h
-    const env = process.env.CYTH_HIGH
+  const resolveHeader = (h?: number): number => {
+    if (h !== undefined && Number.isFinite(h) && h > 0) return Math.floor(h)
+    const env = process.env.CYTH_HEADER
     const n = env === undefined || env === '' ? NaN : Number(env)
-    return Number.isFinite(n) && n > 0 ? n : HIGH
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HEADER
   }
 
-  const textOf = (l: number, i: number): string => nodeText(l, i)
+  // `#n|` + the leaf line of item n, rebuilt from the item itself so it never
+  // changes (a legacy model summary on the node is not used). The tag shows
+  // where the session changes, and on the oldest line of the slice.
+  const recentLine = (seq: number, first: boolean): string => {
+    const item = getItem(seq)
+    const t = first ? tag(item.harness, item.session) : leafTag(seq)
+    return `#${seq}|` + leafText(item, t).text
+  }
 
-  const ensureView = (h: string, s: string): ViewState & { high: number } => {
+  const ensureView = (h: string, s: string, header: number): { tailStart: number } => {
     const existing = loadView(h, s)
     if (existing) return existing
-    const count = countItems()
-    const high = resolveHigh()
-    const st: ViewState & { high: number } = { parts: [], viewEnd: 0, tailStart: count, high }
-    reach(st, st.tailStart, textOf)
-    fit(st, high, textOf)
-    persistView(h, s, st)
+    const st = { tailStart: countItems() }
+    persistView(h, s, st.tailStart, header)
     return st
   }
 
@@ -432,40 +437,35 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     },
 
     view(h, s, opts) {
-      const high = resolveHigh(opts?.high)
+      const header = resolveHeader(opts?.header)
       let st = loadView(h, s)
       if (!st) {
         const count = countItems()
         const tailStart = Math.max(0, Math.min(opts?.tailStart ?? count, count))
-        st = { parts: [], viewEnd: 0, tailStart, high }
-        reach(st, tailStart, textOf)
-        fit(st, high, textOf)
-        persistView(h, s, st)
-      } else if (opts?.high !== undefined) {
-        st.high = high
-        persistView(h, s, st)
+        st = { tailStart }
+        persistView(h, s, tailStart, header)
       }
       const pinned = renderPins(openPins())
-      const block = renderBlock(st.parts, pinned.block)
-      const rootHex = mthHex(st.viewEnd)
+      const block = renderBlock(pinned.block, recentLines(st.tailStart, header, recentLine))
+      const viewEnd = st.tailStart
+      const rootHex = mthHex(viewEnd)
       const bytess = bytes(block)
       const algedonic = pinned.over > 0
       const sha = sha256hex(block)
       const last = db.prepare('SELECT sha FROM views_log WHERE harness = ? AND session = ? ORDER BY id DESC LIMIT 1').get(h, s)
       if (!last || last.sha !== sha) {
         db.prepare('INSERT INTO views_log (ts, harness, session, n, root, view_end, tail_start, sha, bytes) VALUES (?,?,?,?,?,?,?,?,?)')
-          .run(new Date().toISOString(), h, s, st.viewEnd, rootHex, st.viewEnd, st.tailStart, sha, bytess)
+          .run(new Date().toISOString(), h, s, viewEnd, rootHex, viewEnd, st.tailStart, sha, bytess)
       }
-      return { block, viewEnd: st.viewEnd, tailStart: st.tailStart, bytes: bytess, root: rootHex, algedonic }
+      return { block, viewEnd, tailStart: st.tailStart, bytes: bytess, root: rootHex, algedonic }
     },
 
     fold(h, s, tailStart) {
-      const st = ensureView(h, s)
+      const header = resolveHeader()
+      const st = ensureView(h, s, header)
       const count = countItems()
       st.tailStart = Math.min(Math.max(tailStart, st.tailStart), count)
-      reach(st, st.tailStart, textOf)
-      fit(st, st.high, textOf)
-      persistView(h, s, st)
+      persistView(h, s, st.tailStart, header)
     },
 
     zoom(ref) {
@@ -713,12 +713,10 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         }
       }
       const count = rows.length
-      for (const v of db.prepare('SELECT harness, session, parts, view_end FROM views').all()) {
-        let parts: any
-        try { parts = JSON.parse(v.parts) } catch { problems.push(`view ${v.harness}/${v.session}: parts is not valid JSON`); continue }
-        const cov = coverage(parts, v.view_end)
-        for (const c of cov) problems.push(`view ${v.harness}/${v.session}: ${c}`)
-        if (v.view_end > count) problems.push(`view ${v.harness}/${v.session}: viewEnd ${v.view_end} > count ${count}`)
+      // A view is its tailStart; `parts` is a legacy column (the old tree view) and is not read.
+      for (const v of db.prepare('SELECT harness, session, view_end, tail_start FROM views').all()) {
+        if (v.view_end !== v.tail_start) problems.push(`view ${v.harness}/${v.session}: viewEnd ${v.view_end} != tailStart ${v.tail_start}`)
+        if (v.tail_start > count) problems.push(`view ${v.harness}/${v.session}: tailStart ${v.tail_start} > count ${count}`)
       }
       return { ok: problems.length === 0, problems }
     },

@@ -265,3 +265,42 @@ Test command: `node --test core/test/properties.test.ts core/test/store.test.ts`
 | F06 | core/src/pins.ts | failure key includes the tool name (a Read success does not resolve a Bash failure) | killed |
 | F07 | core/src/leaves.ts | tool ERR only from isError or a nonzero exit code of that call | killed |
 | F08 | core/src/leaves.ts | exit code 0 is ok | killed |
+
+## Header view (2026-10-25): 26/26 killed
+The tree view and the summary drain were removed, so the `fit`/`reach` guards (I30, I37-I39,
+I42), the claude-code drain guards (M23-M29) and the pi drain guards (P1-P4 above) no longer
+apply. New guards, swept with `node core/scripts/mutate.ts <file> --test "<cmd>"`:
+core `core/test/mutants.header.json` (`node --test core/test/properties.test.ts core/test/store.test.ts core/test/cli.test.ts`),
+pi `pi/test/mutants.header.json` (`node --test pi/test/extension.test.ts pi/test/plan.test.ts`),
+claude-code `claude-code/tests/mutants.header.json` (`claude plugin test claude-code`).
+H01 survived the first sweep (random budgets never hit the newline boundary); a fixed
+boundary case was added to P2 and H01 was re-swept killed.
+
+| id | file | guard | result |
+|---|---|---|---|
+| H01 | core/src/view.ts | <recent> <= HEADER: each line's newline counts | killed (after adding the boundary case) |
+| H02 | core/src/view.ts | <recent> <= HEADER: the budget binds | killed |
+| H03 | core/src/view.ts | contiguous slice: the first line that does not fit stops the walk | killed |
+| H04 | core/src/view.ts | whole lines only | killed |
+| H05 | core/src/view.ts | newest last | killed |
+| H06 | core/src/view.ts | never an item >= tailStart (and the slice ends at tailStart - 1) | killed |
+| H07 | core/src/view.ts | the oldest line carries its session tag | killed |
+| H08 | core/src/view.ts | determinism: no clock in the block | killed |
+| H09 | core/src/index.ts | block stable between folds: <recent> ends at tailStart, not at count | killed |
+| H10 | core/src/index.ts | recent line rebuilt from the item (tagged oldest line, no legacy summary) | killed |
+| H11 | core/src/index.ts | resolveHeader rejects non-positive CYTH_HEADER | killed |
+| H12 | core/src/index.ts | resolveHeader rejects a non-positive explicit header | killed |
+| H13 | core/src/index.ts | CYTH_HEADER honoured | killed |
+| H14 | core/src/util.ts | default header budget is 8192 bytes | killed |
+| H15 | core/src/index.ts | fold is forward only | killed |
+| H16 | core/src/index.ts | verify: viewEnd equals tailStart | killed |
+| H17 | core/src/index.ts | verify: tailStart <= count | killed |
+| PH1 | pi/src/extension.ts | a tool error carries core's message | killed |
+| PH2 | pi/src/extension.ts | a tool error is an error result | killed |
+| PH3 | pi/src/extension.ts | CYTH_HEADER reaches core's view | killed |
+| PH4 | pi/src/extension.ts | status line has no summary backlog | killed |
+| PH5 | pi/src/extension.ts | no summaries: agent_end never drains pending | killed |
+| CH1 | claude-code/hooks/register.ts | a tool error is core's message, not the CLI wrapper | killed |
+| CH2 | claude-code/hooks/register.ts | a tool error is not a bare 'failed' | killed |
+| CH3 | claude-code/hooks/register.ts | status line has no summary backlog | killed |
+| CH4 | claude-code/hooks/register.ts | no summaries: a turn never drains pending | killed |
