@@ -11,6 +11,8 @@ import { DatabaseSync } from 'node:sqlite'
 import type { NormItem, Store } from '../src/types.ts'
 import { PAGE, bytes } from '../src/util.ts'
 import { tag } from '../src/leaves.ts'
+import { CONTRACT } from '../src/view.ts'
+import { readFileSync } from 'node:fs'
 
 const { openStore } = await import('../src/index.ts')
 
@@ -723,4 +725,50 @@ test('forgetSession: ambiguous prefix refuses; the session raw rows go', () => {
   s.forgetSession('abcd-1')
   assert.equal(db().prepare('SELECT COUNT(*) AS c FROM raw').get().c, 0)
   assert.equal(s.status().items, 2)
+})
+
+test('search from: filters by item kind before limit, FTS and regex, composes with own-call exclusion', () => {
+  const { s } = mk()
+  const items: NormItem[] = [
+    user('zebra decision: keep the ledger', 'sess1', 'k0'),
+    asst('zebra ledger noted', 'sess1', 'k1'),
+    tool('Bash', { command: 'grep zebra ledger' }, 'zebra ledger out', false, 'sess1', 'k2'),
+    tool('mcp__cyberthymesia__memory_find', { query: 'zebra ledger' }, 'zebra ledger echo', false, 'sess1', 'k3'),
+    tool('memory_find', { query: 'zebra ledger' }, 'zebra ledger echo', false, 'sess1', 'k4'),
+  ]
+  for (let k = 0; k < 6; k++) items.push(asst('zebra ledger filler ' + 'zebra '.repeat(k + 3), 'sess1', 'f' + k))
+  items.push(user('zebra later word', 'sess1', 'k5'))
+  s.ingest(items)
+  const refs = (out: string): number[] => out.split('\n').filter((l) => l.startsWith('#')).map((l) => Number(/^#(\d+)\|/.exec(l)![1]))
+  const kinds = (out: string): string[] => out.split('\n').filter((l) => l.startsWith('#')).map((l) => /^#\d+\|(\w)/.exec(l)![1])
+  for (const regex of [false, true]) {
+    const o = (from?: 'user' | 'assistant' | 'tool', limit?: number): string => s.search('zebra', { regex, from, limit })
+    assert.deepEqual(refs(o('user')), [11, 0], `user only (regex=${regex})`)
+    assert.deepEqual(refs(o('tool')), [2], 'tool only: own calls #3 and #4 stay out')
+    assert.deepEqual(refs(o('assistant')), [10, 9, 8, 7, 6, 5, 1])
+    assert.deepEqual([...new Set(kinds(o('assistant')))], ['a'])
+    assert.equal(refs(o()).length, 10, 'no from: every kind but the own calls')
+    // The limit counts only filtered hits: 2 user hits come back although more non-user hits exist.
+    assert.deepEqual(refs(o('user', 2)), [11, 0])
+    assert.equal(refs(o('assistant', 3)).length, 3)
+    assert.match(o('tool'), /^#2\|t:/)
+  }
+  assert.equal(s.search('nomatchatall', { from: 'user' }), 'no hits for nomatchatall')
+  for (const bad of ['users', '', 'USER', 'memory_find']) {
+    assert.throws(() => s.search('zebra', { from: bad as 'user' }), /from must be user, assistant or tool, got /, `bad value "${bad}"`)
+    assert.throws(() => s.search('zebra', { from: bad as 'user', regex: true }), /from must be user/)
+  }
+})
+
+test('contract: search before undoing or raising a blocker, search the user words, two phrasings; SPEC §7 carries it verbatim', () => {
+  const flat = CONTRACT.replace(/\s+/g, ' ')
+  assert.match(flat, /Before you undo, delete, revert or contradict earlier work, or raise something as open, undecided or a blocker, call memory_find/)
+  assert.match(flat, /Do the same before you say something is absent, unknown or not discussed/)
+  assert.match(flat, /Search them with from "user"/)
+  assert.match(flat, /at least two phrasings|Try at least two phrasings/)
+  assert.match(flat, /words the user would have used, not names you made up/)
+  assert.match(flat, /memory_find\(query, from\?\)/)
+  assert.ok(!CONTRACT.includes('—'), 'no em-dashes')
+  const spec = readFileSync(new URL('../../SPEC.md', import.meta.url), 'utf8')
+  assert.ok(spec.includes(CONTRACT), 'SPEC §7 holds the contract verbatim')
 })

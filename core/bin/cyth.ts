@@ -8,14 +8,14 @@ import type { Store } from '../src/types.ts'
 const USAGE = `usage: cyth [--cwd DIR] [--home DIR] [--json] <command> ...
   status | sync-claude <file> | sync-pi <file> [--one-shot] | backfill [--claude DIR] [--pi DIR]
   | view <harness> <session> | fold <harness> <session> <seq> | zoom <ref>
-  | search <q> [--regex] [--limit N] | roots | pin <ref> <reason> | unpin <id>
+  | search <q> [--regex] [--limit N] [--from user|assistant|tool] | roots | pin <ref> <reason> | unpin <id>
   | pins | forget-session <id|tag> [--dry-run] | verify`
 
 class Usage extends Error {}
 
 type Out = { json: unknown; human: string; code?: number }
 
-const VALUE_FLAGS = new Set(['--cwd', '--home', '--limit', '--claude', '--pi', '--session'])
+const VALUE_FLAGS = new Set(['--cwd', '--home', '--limit', '--from', '--claude', '--pi', '--session'])
 const BOOL_FLAGS = new Set(['--json', '--regex', '--dry-run', '--one-shot'])
 const flags = new Map<string, string | true>()
 const pos: string[] = []
@@ -118,10 +118,11 @@ function run(): Out {
       return text(open().zoom(rest[0]))
     }
     case 'search': {
-      arity(1, 'search <q> [--regex] [--limit N]')
+      arity(1, 'search <q> [--regex] [--limit N] [--from user|assistant|tool]')
       const limit = int('--limit')
+      const from = str('--from')
       const q = rest[0]
-      return text(open().search(q, { ...(flags.get('--regex') === true ? { regex: true } : {}), ...(limit === undefined ? {} : { limit }) }))
+      return text(open().search(q, { ...(flags.get('--regex') === true ? { regex: true } : {}), ...(limit === undefined ? {} : { limit }), ...(from === undefined ? {} : { from: from as 'user' }) }))
     }
     case 'roots': {
       arity(0, 'roots')

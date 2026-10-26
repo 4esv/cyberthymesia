@@ -284,8 +284,9 @@ export function createExtension(pi: Pi, deps: Deps): void {
 			query: str("FTS5 query, or a regex when regex=true"),
 			regex: { type: "boolean", description: "Treat query as a regular expression" },
 			limit: { type: "integer", description: "Max hits (default 20)" },
+			from: { type: "string", enum: ["user", "assistant", "tool"], description: "Only items of this kind. Use user to search the user's own words, where decisions live" },
 		}, required: ["query"] },
-		(s, p) => s.search(String(p.query), { regex: p.regex === true, limit: typeof p.limit === "number" ? p.limit : undefined }));
+		(s, p) => s.search(String(p.query), { regex: p.regex === true, limit: typeof p.limit === "number" ? p.limit : undefined, ...(p.from === undefined ? {} : { from: p.from as "user" }) }));
 	tool("memory_pin", "Pin an item so it shows verbatim in <pinned> until unpinned.",
 		{ type: "object", properties: { ref: str("Item ref, e.g. #42"), reason: str("Why it must stay at full resolution") }, required: ["ref", "reason"] },
 		(s, p) => `pinned as ${s.pin(String(p.ref), String(p.reason))}`);

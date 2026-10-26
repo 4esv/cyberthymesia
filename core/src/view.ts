@@ -18,12 +18,18 @@ A line ending in … is clipped. A tool line is a digest of the call.
 The messages after this block are the recent part of this session, verbatim.
 This block was built when this conversation started or last compacted. The tools
 read the log as it is now.
-- Before you say something is absent, unknown or not discussed, call memory_find.
-  Try at least two phrasings.
+- Before you undo, delete, revert or contradict earlier work, or raise something
+  as open, undecided or a blocker, call memory_find. See why it is there and
+  whether it was settled. Do the same before you say something is absent,
+  unknown or not discussed.
+- Decisions live in the user's own words. Search them with from "user".
+- Try at least two phrasings. Use words the user would have used, not names you
+  made up.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
-- memory_find(query): full-text search over every item, newest first. Calls of
-  these memory_* tools are left out of search and <recent>.
+- memory_find(query, from?): full-text search over every item, newest first. from
+  is user, assistant or tool and keeps only items of that kind. Calls of these
+  memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.

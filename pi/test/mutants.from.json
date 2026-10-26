@@ -1,0 +1,16 @@
+[
+  {
+    "id": "PF1",
+    "file": "pi/src/extension.ts",
+    "find": ", ...(p.from === undefined ? {} : { from: p.from as \"user\" })",
+    "replace": "",
+    "guard": "Pi memory_find passes from to core"
+  },
+  {
+    "id": "PF2",
+    "file": "pi/src/extension.ts",
+    "find": "enum: [\"user\", \"assistant\", \"tool\"], ",
+    "replace": "",
+    "guard": "Pi memory_find schema lists the three kinds"
+  }
+]

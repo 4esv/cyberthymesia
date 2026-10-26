@@ -501,11 +501,18 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     // fact), at query time, so stores ingested before this need no migration.
     search(q, opts) {
       const limit = opts?.limit ?? 20
+      const from = opts?.from
+      if (from !== undefined && from !== 'user' && from !== 'assistant' && from !== 'tool') {
+        throw new Error(`search: from must be user, assistant or tool, got "${String(from)}"`)
+      }
+      // The kind filter runs in SQL, so it applies before limit.
+      const KIND = from === undefined ? '' : ' AND items.kind = ?'
+      const kindArgs = from === undefined ? [] : [from]
       const hits: { n: number; leaf: string; snippet: string }[] = []
       if (opts?.regex) {
         let re: RegExp
         try { re = new RegExp(q, 'i') } catch { return `no hits for ${q}` }
-        const rows = db.prepare(`SELECT items_fts.rowid AS rowid, body FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE ${NOT_OWN} ORDER BY items_fts.rowid DESC`).all(...CYTH_TOOLS)
+        const rows = db.prepare(`SELECT items_fts.rowid AS rowid, body FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE ${NOT_OWN}${KIND} ORDER BY items_fts.rowid DESC`).all(...CYTH_TOOLS, ...kindArgs)
         for (const row of rows) {
           if (hits.length >= limit) break
           const m = re.exec(row.body)
@@ -517,8 +524,8 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         }
       } else {
         const pick = (query: string) => db.prepare(
-          `SELECT items_fts.rowid AS rowid, snippet(items_fts, 0, '', '', ' … ', 24) AS s FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE items_fts MATCH ? AND ${NOT_OWN} ORDER BY bm25(items_fts) LIMIT ?`,
-        ).all(query, ...CYTH_TOOLS, limit)
+          `SELECT items_fts.rowid AS rowid, snippet(items_fts, 0, '', '', ' … ', 24) AS s FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE items_fts MATCH ? AND ${NOT_OWN}${KIND} ORDER BY bm25(items_fts) LIMIT ?`,
+        ).all(query, ...CYTH_TOOLS, ...kindArgs, limit)
         let rows: any[]
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
         rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))

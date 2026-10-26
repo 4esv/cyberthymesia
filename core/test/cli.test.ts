@@ -156,6 +156,17 @@ test('--regex and --limit reach search', () => {
   assert.ok(!json('search', 'su+do').text.includes('#0'))
 })
 
+test('--from reaches search; a bad value is a clear error, not a crash', () => {
+  assert.ok(json('search', 'sudo', '--from', 'user').text.includes('#0'))
+  assert.equal(json('search', 'sudo', '--from', 'assistant').text, 'no hits for sudo')
+  assert.ok(json('search', 'listing', '--from', 'assistant').text.includes('#1'))
+  const bad = run('search', 'sudo', '--from', 'robot')
+  assert.notEqual(bad.status, 0)
+  assert.match(bad.stderr, /from must be user, assistant or tool, got "robot"/)
+  assert.doesNotMatch(bad.stderr, /at .*\.ts:\d+/, 'no stack trace')
+  assert.notEqual(run('search', 'sudo', '--from').status, 0, '--from needs a value')
+})
+
 test('--cwd selects the project regardless of the process cwd', () => {
   const other = mkdtempSync(join(tmpdir(), 'cyth-cli-other-'))
   try {

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "CF1",
+    "file": "claude-code/hooks/register.ts",
+    "find": "...(i.from === undefined ? [] : ['--from', String(i.from)])",
+    "replace": "",
+    "guard": "Claude memory_find passes --from to the CLI"
+  },
+  {
+    "id": "CF2",
+    "file": "claude-code/hooks/register.ts",
+    "find": "enum: ['user', 'assistant', 'tool'], ",
+    "replace": "",
+    "guard": "Claude memory_find schema lists the three kinds"
+  }
+]

@@ -242,6 +242,18 @@ test('session.start registers the five memory tools and shows status', async ($,
   expect(w.statuses).toContain('cyth 3 items · 2 pins')
 })
 
+test('memory_find registers a from parameter with the three kinds', async ($, on) => {
+  world(on, { cli: goodCli })
+  let find: { inputSchema?: { properties?: { from?: { enum?: string[] } } } } | undefined
+  on('session.start', () => ({ cwd: CWD }) as never)
+  on('tool.register', (_, e) => {
+    if ((e as { name: string }).name === 'memory_find') find = e as never
+    return { value: { name: (e as { name: string }).name } as never }
+  })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  expect(find?.inputSchema?.properties?.from?.enum).toEqual(['user', 'assistant', 'tool'])
+})
+
 test('status line flags an algedonic alarm', async ($, on) => {
   const w = world(on, { cli: argv => (sub(argv) === 'status' ? { exitCode: 0, stdout: '{"items":1,"pending":0,"pins":1,"algedonic":true}' } : goodCli(argv)) })
   on('session.start', () => ({ cwd: CWD }) as never)
@@ -268,6 +280,24 @@ test('memory_find with regex true adds --regex; false does not', async ($, on) =
   expect(w.runs[0]!.argv.slice(7)).toEqual(['search', 'a.*b', '--regex'])
   await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'a.*b', regex: false } as never)
   expect(w.runs[1]!.argv.slice(7)).toEqual(['search', 'a.*b'])
+})
+
+test('memory_find from adds --from; absent adds nothing', async ($, on) => {
+  const w = world(on, { cli: toolCli })
+  on('tool.call', () => ({ result: 'native' }))
+  await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'q', from: 'user' } as never)
+  expect(w.runs[0]!.argv.slice(7)).toEqual(['search', 'q', '--from', 'user'])
+  await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'q', regex: true, from: 'tool' } as never)
+  expect(w.runs[1]!.argv.slice(7)).toEqual(['search', 'q', '--regex', '--from', 'tool'])
+  await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'q' } as never)
+  expect(w.runs[2]!.argv.slice(7)).toEqual(['search', 'q'])
+})
+
+test('memory_find with a bad from denies with core\'s message', async ($, on) => {
+  world(on, { cli: () => ({ exitCode: 1, stderr: 'search: from must be user, assistant or tool, got "robot"' }) })
+  on('tool.call', () => ({ result: 'native' }))
+  const r = await $.tool.call({ tool: 'mcp__cyberthymesia__memory_find', query: 'q', from: 'robot' } as never)
+  expect(r).toEqual({ deny: 'memory_find: search: from must be user, assistant or tool, got "robot"' })
 })
 
 test('the other memory tools map to their CLI commands', async ($, on) => {

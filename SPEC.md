@@ -116,9 +116,14 @@ bytes stay stable between folds (prompt cache).
 - `zoom('#n')` → item n whole: kind, session, ts, text (tool: input + output),
   paged at `PAGE = 20000` bytes; `zoom('#n@offset')` continues; every page ends
   with a footer saying whether more remains and how to get it (OptMem).
-- `search(q, {regex?, limit=20})` → `#n|leaf text` + a snippet per hit.
+- `search(q, {regex?, limit=20, from?})` → `#n|leaf text` + a snippet per hit.
   Default FTS5: bm25 picks the best `limit` hits, which are then listed newest
   first (by `seq`, descending); `regex` scans newest first, capped by PAGE.
+  `from` ∈ {`user`, `assistant`, `tool`} keeps only items of that kind, in SQL
+  before `limit` applies (FTS and regex alike), so `limit` counts filtered hits
+  and the exclusion below still holds. Any other value throws
+  `search: from must be user, assistant or tool, got "x"`; both adapters return
+  that message to the model as an error result.
 - **Own calls are not hits.** A tool item of cyth's own tools (`memory_find`,
   `memory_zoom`, `memory_pin`, `memory_unpin`, `memory_pins`, in both
   spellings: Pi's bare name and Claude Code's `mcp__cyberthymesia__<name>`)
@@ -223,12 +228,18 @@ A line ending in … is clipped. A tool line is a digest of the call.
 The messages after this block are the recent part of this session, verbatim.
 This block was built when this conversation started or last compacted. The tools
 read the log as it is now.
-- Before you say something is absent, unknown or not discussed, call memory_find.
-  Try at least two phrasings.
+- Before you undo, delete, revert or contradict earlier work, or raise something
+  as open, undecided or a blocker, call memory_find. See why it is there and
+  whether it was settled. Do the same before you say something is absent,
+  unknown or not discussed.
+- Decisions live in the user's own words. Search them with from "user".
+- Try at least two phrasings. Use words the user would have used, not names you
+  made up.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
-- memory_find(query): full-text search over every item, newest first. Calls of
-  these memory_* tools are left out of search and <recent>.
+- memory_find(query, from?): full-text search over every item, newest first. from
+  is user, assistant or tool and keeps only items of that kind. Calls of these
+  memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.
 - memory_pin(ref, reason) / memory_unpin(id): keep an item in <pinned>, or release it.
@@ -256,7 +267,7 @@ interface Store {
     block: string; viewEnd: number; tailStart: number; bytes: number; root: string; algedonic: boolean }
   fold(harness, session, tailStart: number): void   // advance tailStart (forward only)
   zoom(ref: string): string
-  search(q: string, opts?: { regex?: boolean; limit?: number }): string
+  search(q: string, opts?: { regex?: boolean; limit?: number; from?: 'user'|'assistant'|'tool' }): string
   pin(ref: string, reason: string): number; unpin(id: number): void; pins(): string
   forgetSession(arg: string, opts?: { dryRun?: boolean }): ForgetPlan  // §8a
   status(): { items: number; nodes: number; pins: number; algedonic: boolean; root: string }
@@ -271,7 +282,7 @@ once; SQLite serializes them.
 
 CLI `core/bin/cyth.ts` (run with `node`): `status | sync-claude <file> |
 sync-pi <file> | backfill [--claude DIR] [--pi DIR] | view <harness> <session>
-| fold <harness> <session> <seq> | zoom <ref> | search <q> [--regex] | pin <ref>
+| fold <harness> <session> <seq> | zoom <ref> | search <q> [--regex] [--limit N] [--from user|assistant|tool] | pin <ref>
 <reason> | unpin <id> | pins | forget-session <id|tag> [--dry-run] | verify`. `sync-pi` takes `--one-shot`. Global `--cwd DIR` (default cwd) and `--json`. Exit ≠ 0 on error,
 message on stderr.
 
@@ -294,7 +305,8 @@ calls, pins, views, cursors, remaining) and changes nothing.
 Both: **fail open.** Any error in cyberthymesia → the harness's native
 behaviour, plus a status line saying so. `CYTH_DISABLE=1` → pass-through.
 **No model calls:** neither adapter asks a model for anything (no summaries,
-and core has no summary queue). Tools: `memory_zoom`, `memory_find`, `memory_pin`,
+and core has no summary queue). Tools: `memory_zoom`, `memory_find` (query, regex?, from?, plus limit? in Pi; `from` has the same enum and
+semantics in both adapters), `memory_pin`,
 `memory_unpin`, `memory_pins` (thin calls into core). A core error in a tool
 reaches the model as `<tool>: <core's message>` (an error result), never a bare
 "failed". The status line shows items and pins. Both adapters have identical

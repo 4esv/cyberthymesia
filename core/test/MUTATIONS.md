@@ -371,3 +371,28 @@ survived (no quoted or code example matched a new pattern), examples were added,
 | D05 | core/src/pins.ts | directive: double-quoted spans ignored | killed (after adding the case) |
 | D06 | core/src/pins.ts | directive: inline code ignored | killed (after adding the case) |
 | D07 | core/src/pins.ts | directive: fenced code ignored | killed (after adding the case) |
+
+## Search `from` filter and the broadened contract (2026-10-25): 19/19 killed
+Core test command: `node --test core/test/store.test.ts core/test/cli.test.ts` (mutants in core/test/mutants.from.json). Pi: `node --test pi/test/*.test.ts` (pi/test/mutants.from.json). Claude: `claude plugin test claude-code` (claude-code/tests/mutants.from.json).
+
+| id | file | guard | result |
+|---|---|---|---|
+| F01 | core/src/index.ts | FTS search applies the from filter | killed |
+| F02 | core/src/index.ts | regex search applies the from filter | killed |
+| F03 | core/src/index.ts | from keeps (not drops) the named kind | killed |
+| F04 | core/src/index.ts | a bad from throws instead of matching nothing | killed |
+| F05 | core/src/index.ts | from=tool is accepted | killed |
+| F06 | core/src/index.ts | from=assistant is accepted | killed |
+| F07 | core/src/index.ts | from=user is accepted | killed |
+| F08 | core/src/index.ts | FTS kind filter applies before limit (bm25 top-N picks only from the kind) | killed |
+| F09 | core/src/index.ts | FTS limit is the caller's limit, counted over filtered hits | killed |
+| F10 | core/src/index.ts | the error names the allowed values and the bad one | killed |
+| F11 | core/bin/cyth.ts | CLI --from reaches search | killed |
+| F12 | core/bin/cyth.ts | CLI --from takes a value | killed |
+| F13 | core/src/view.ts | contract tells the model to search with from user | killed |
+| F14 | core/src/view.ts | contract covers undo/blocker cases | killed |
+| F15 | core/src/view.ts | contract warns against invented names | killed |
+| PF1 | pi/src/extension.ts | Pi memory_find passes from to core | killed |
+| PF2 | pi/src/extension.ts | Pi memory_find schema lists the three kinds | killed |
+| CF1 | claude-code/hooks/register.ts | Claude memory_find passes --from to the CLI | killed |
+| CF2 | claude-code/hooks/register.ts | Claude memory_find schema lists the three kinds | killed |

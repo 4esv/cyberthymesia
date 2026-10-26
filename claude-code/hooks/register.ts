@@ -238,10 +238,14 @@ const TOOLS = [
     description: "Full-text search over every item of the project's history, verbatim, newest first (calls of the memory_* tools themselves are left out).",
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string' }, regex: { type: 'boolean', description: 'treat query as a regex' } },
+      properties: {
+        query: { type: 'string' },
+        regex: { type: 'boolean', description: 'treat query as a regex' },
+        from: { type: 'string', enum: ['user', 'assistant', 'tool'], description: "only items of this kind; use user to search the user's own words, where decisions live" },
+      },
       required: ['query'],
     },
-    argv: (i: Record<string, unknown>) => ['search', String(i.query), ...(i.regex === true ? ['--regex'] : [])],
+    argv: (i: Record<string, unknown>) => ['search', String(i.query), ...(i.regex === true ? ['--regex'] : []), ...(i.from === undefined ? [] : ['--from', String(i.from)])],
   },
   {
     name: 'memory_pin',

@@ -45,7 +45,7 @@ function fakeStore(seqByUuid: Map<string, number>, opts: { throwOn?: string } = 
 			return { block: block(), viewEnd: tailStart, tailStart, bytes: block().length, root: "r", algedonic: false };
 		},
 		fold(h, sess, t) { calls.push(`fold ${t}`); tailStart = t; },
-		zoom: (ref) => { if (ref === "#3-9") throw new Error("bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it"); return `zoom ${ref}`; }, search: (q) => `search ${q}`, pin: () => 7, unpin: () => {}, pins: () => "<pinned></pinned>",
+		zoom: (ref) => { if (ref === "#3-9") throw new Error("bad ref #3-9: a range #lo-hi must be aligned, hi-lo+1 a power of two and lo a multiple of it"); return `zoom ${ref}`; }, search: (q, o) => { if (o?.from !== undefined && !["user", "assistant", "tool"].includes(o.from)) throw new Error(`search: from must be user, assistant or tool, got "${o.from}"`); return `search ${q}${o?.from === undefined ? "" : ` from=${o.from}`}`; }, pin: () => 7, unpin: () => {}, pins: () => "<pinned></pinned>",
 		pending: () => { calls.push("pending"); return []; }, put: () => { calls.push("put"); return true; },
 		status: () => ({ items: 9, nodes: 9, pins: 0, algedonic: false, root: "r" }),
 		close() {},
@@ -191,6 +191,17 @@ test("tools: five memory tools, thin calls into core", async () => {
 	assert.notEqual(r.isError, true);
 	const p = await pi.tools.get("memory_pin").execute("id", { ref: "#4", reason: "r" }, undefined, undefined, ctx);
 	assert.equal(p.content[0].text, "pinned as 7");
+});
+
+test("memory_find: from reaches core; a bad value comes back as core's message", async () => {
+	const { pi, ctx } = setup();
+	const find = pi.tools.get("memory_find");
+	assert.deepEqual(find.parameters.properties.from.enum, ["user", "assistant", "tool"]);
+	assert.equal((await find.execute("id", { query: "x", from: "user" }, undefined, undefined, ctx)).content[0].text, "search x from=user");
+	assert.equal((await find.execute("id", { query: "x" }, undefined, undefined, ctx)).content[0].text, "search x");
+	const bad = await find.execute("id", { query: "x", from: "robot" }, undefined, undefined, ctx);
+	assert.equal(bad.isError, true);
+	assert.equal(bad.content[0].text, 'memory_find: search: from must be user, assistant or tool, got "robot"');
 });
 
 test("memory_zoom: a core error comes back as core's message, as an error result", async () => {

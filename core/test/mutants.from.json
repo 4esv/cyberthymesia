@@ -1,0 +1,107 @@
+[
+  {
+    "id": "F01",
+    "file": "core/src/index.ts",
+    "find": "AND ${NOT_OWN}${KIND} ORDER BY bm25(items_fts) LIMIT ?`,\n        ).all(query, ...CYTH_TOOLS, ...kindArgs, limit)",
+    "replace": "AND ${NOT_OWN} ORDER BY bm25(items_fts) LIMIT ?`,\n        ).all(query, ...CYTH_TOOLS, limit)",
+    "guard": "FTS search applies the from filter"
+  },
+  {
+    "id": "F02",
+    "file": "core/src/index.ts",
+    "find": "WHERE ${NOT_OWN}${KIND} ORDER BY items_fts.rowid DESC`).all(...CYTH_TOOLS, ...kindArgs)",
+    "replace": "WHERE ${NOT_OWN} ORDER BY items_fts.rowid DESC`).all(...CYTH_TOOLS)",
+    "guard": "regex search applies the from filter"
+  },
+  {
+    "id": "F03",
+    "file": "core/src/index.ts",
+    "find": "' AND items.kind = ?'",
+    "replace": "' AND items.kind != ?'",
+    "guard": "from keeps (not drops) the named kind"
+  },
+  {
+    "id": "F04",
+    "file": "core/src/index.ts",
+    "find": "if (from !== undefined && from !== 'user'",
+    "replace": "if (false && from !== 'user'",
+    "guard": "a bad from throws instead of matching nothing"
+  },
+  {
+    "id": "F05",
+    "file": "core/src/index.ts",
+    "find": "from !== 'user' && from !== 'assistant' && from !== 'tool') {",
+    "replace": "from !== 'user' && from !== 'assistant') {",
+    "guard": "from=tool is accepted"
+  },
+  {
+    "id": "F06",
+    "file": "core/src/index.ts",
+    "find": "from !== 'user' && from !== 'assistant' && from !== 'tool') {",
+    "replace": "from !== 'user' && from !== 'tool') {",
+    "guard": "from=assistant is accepted"
+  },
+  {
+    "id": "F07",
+    "file": "core/src/index.ts",
+    "find": "if (from !== undefined && from !== 'user' && from !== 'assistant'",
+    "replace": "if (from !== undefined && from !== 'assistant'",
+    "guard": "from=user is accepted"
+  },
+  {
+    "id": "F08",
+    "file": "core/src/index.ts",
+    "find": "`SELECT items_fts.rowid AS rowid, snippet(items_fts, 0, '', '', ' … ', 24) AS s FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE items_fts MATCH ? AND ${NOT_OWN}${KIND} ORDER BY bm25(items_fts) LIMIT ?`,\n        ).all(query, ...CYTH_TOOLS, ...kindArgs, limit)",
+    "replace": "`SELECT * FROM (SELECT items_fts.rowid AS rowid, snippet(items_fts, 0, '', '', ' … ', 24) AS s FROM items_fts JOIN items ON items.seq = items_fts.rowid WHERE items_fts MATCH ? AND ${NOT_OWN} ORDER BY bm25(items_fts) LIMIT ?) WHERE rowid IN (SELECT seq FROM items WHERE 1=1${KIND})`,\n        ).all(query, ...CYTH_TOOLS, limit, ...kindArgs)",
+    "guard": "FTS kind filter applies before limit (bm25 top-N picks only from the kind)"
+  },
+  {
+    "id": "F09",
+    "file": "core/src/index.ts",
+    "find": "LIMIT ?`,\n        ).all(query, ...CYTH_TOOLS, ...kindArgs, limit)",
+    "replace": "LIMIT ?`,\n        ).all(query, ...CYTH_TOOLS, ...kindArgs, limit * 0 + 2)",
+    "guard": "FTS limit is the caller's limit, counted over filtered hits"
+  },
+  {
+    "id": "F10",
+    "file": "core/src/index.ts",
+    "find": "throw new Error(`search: from must be user, assistant or tool, got \"${String(from)}\"`)",
+    "replace": "throw new Error('bad from')",
+    "guard": "the error names the allowed values and the bad one"
+  },
+  {
+    "id": "F11",
+    "file": "core/bin/cyth.ts",
+    "find": "...(from === undefined ? {} : { from: from as 'user' })",
+    "replace": "",
+    "guard": "CLI --from reaches search"
+  },
+  {
+    "id": "F12",
+    "file": "core/bin/cyth.ts",
+    "find": "'--limit', '--from', '--claude'",
+    "replace": "'--limit', '--claude'",
+    "guard": "CLI --from takes a value"
+  },
+  {
+    "id": "F13",
+    "file": "core/src/view.ts",
+    "find": "Decisions live in the user's own words. Search them with from \"user\".",
+    "replace": "Decisions live in the user's own words.",
+    "guard": "contract tells the model to search with from user"
+  },
+  {
+    "id": "F14",
+    "file": "core/src/view.ts",
+    "find": "or raise something\n  as open, undecided or a blocker, call memory_find.",
+    "replace": "call memory_find.",
+    "guard": "contract covers undo/blocker cases"
+  },
+  {
+    "id": "F15",
+    "file": "core/src/view.ts",
+    "find": "Use words the user would have used, not names you\n  made up.",
+    "replace": "",
+    "guard": "contract warns against invented names"
+  }
+]
