@@ -396,3 +396,18 @@ Core test command: `node --test core/test/store.test.ts core/test/cli.test.ts` (
 | PF2 | pi/src/extension.ts | Pi memory_find schema lists the three kinds | killed |
 | CF1 | claude-code/hooks/register.ts | Claude memory_find passes --from to the CLI | killed |
 | CF2 | claude-code/hooks/register.ts | Claude memory_find schema lists the three kinds | killed |
+
+## No model paraphrase shown as the log (2026-10-25): 9/9 killed
+Test command: `node --test core/test/store.test.ts` (mutants in core/test/mutants.verbatim.json).
+
+| id | file | guard | result |
+|---|---|---|---|
+| V01 | core/src/index.ts | FTS search hit line is rebuilt from the item, not a legacy model leaf | killed |
+| V02 | core/src/index.ts | regex search hit line is rebuilt from the item, not a legacy model leaf | killed |
+| V03 | core/src/index.ts | roots() never shows a model node's text | killed |
+| V04 | core/src/index.ts | range zoom never shows a model node's text | killed |
+| V05 | core/src/index.ts | a node with a model node anywhere under it is rebuilt (a clip can quote a summary) | killed |
+| V06 | core/src/index.ts | a model node itself is rebuilt, not shown | killed |
+| V07 | core/src/index.ts | rebuilt tool-only node is the det aggregate, as ingest builds it | killed |
+| V08 | core/src/index.ts | rebuilt leaf carries its session tag, as ingest builds it | killed |
+| V09 | core/src/index.ts | memo is keyed by level and index | killed |

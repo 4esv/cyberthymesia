@@ -1,0 +1,11 @@
+[
+  { "id": "V01", "file": "core/src/index.ts", "find": "leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.s), 120)", "replace": "leaf: getNode(0, Number(row.rowid))!.text, snippet: clipMark(oneLine(row.s), 120)", "guard": "FTS search hit line is rebuilt from the item, not a legacy model leaf" },
+  { "id": "V02", "file": "core/src/index.ts", "find": "leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.body.slice(start, finish)), 120)", "replace": "leaf: getNode(0, Number(row.rowid))!.text, snippet: clipMark(oneLine(row.body.slice(start, finish)), 120)", "guard": "regex search hit line is rebuilt from the item, not a legacy model leaf" },
+  { "id": "V03", "file": "core/src/index.ts", "find": "'|' + shown(r.l, r.i, ctx).text", "replace": "'|' + getNode(r.l, r.i)!.text", "guard": "roots() never shows a model node's text" },
+  { "id": "V04", "file": "core/src/index.ts", "find": "const a = shown(r.l - 1, r.i * 2, ctx)", "replace": "const a = getNode(r.l - 1, r.i * 2)!", "guard": "range zoom never shows a model node's text" },
+  { "id": "V05", "file": "core/src/index.ts", "find": "        if (t.has(k)) break\n        t.add(k)\n", "replace": "        t.add(k)\n        break\n", "guard": "a node with a model node anywhere under it is rebuilt (a clip can quote a summary)" },
+  { "id": "V06", "file": "core/src/index.ts", "find": "for (let l = Number(r.l), i = Number(r.i); l <= 62;", "replace": "for (let l = Number(r.l) + 1, i = Math.floor(Number(r.i) / 2); l <= 62;", "guard": "a model node itself is rebuilt, not shown" },
+  { "id": "V07", "file": "core/src/index.ts", "find": "r = m !== null ? { text: aggText(m), meta: m }", "replace": "r = m !== null ? { text: mergeClip(a.text, b.text), meta: m }", "guard": "rebuilt tool-only node is the det aggregate, as ingest builds it" },
+  { "id": "V08", "file": "core/src/index.ts", "find": "const leaf = leafText(getItem(i), leafTag(i))", "replace": "const leaf = leafText(getItem(i), null)", "guard": "rebuilt leaf carries its session tag, as ingest builds it" },
+  { "id": "V09", "file": "core/src/index.ts", "find": "    const k = `${l}:${i}`\n    const hit = ctx.memo.get(k)", "replace": "    const k = `${i}`\n    const hit = ctx.memo.get(k)", "guard": "memo is keyed by level and index" }
+]

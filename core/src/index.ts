@@ -144,8 +144,9 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   const countItems = (): number => Number(db.prepare('SELECT COUNT(*) AS c FROM items').get().c)
   const buf = (hex: string): Buffer => Buffer.from(hex, 'hex')
 
+  const itemStmt = db.prepare('SELECT harness, session, agent, uuid, kind, ts, text, meta FROM items WHERE seq = ?')
   const getItem = (seq: number): ItemRec => {
-    const r = db.prepare('SELECT harness, session, agent, uuid, kind, ts, text, meta FROM items WHERE seq = ?').get(seq)
+    const r = itemStmt.get(seq)
     if (!r) throw new Error(`item #${seq} does not exist`)
     return {
       seq, harness: r.harness, session: r.session, agent: r.agent, uuid: r.uuid,
@@ -153,16 +154,13 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     }
   }
 
+  const nodeStmt = db.prepare('SELECT text, source, meta, mh FROM nodes WHERE l = ? AND i = ?')
   const getNode = (l: number, i: number): NodeRow | null => {
-    const r = db.prepare('SELECT text, source, meta, mh FROM nodes WHERE l = ? AND i = ?').get(l, i)
+    const r = nodeStmt.get(l, i)
     if (!r) return null
     return { l, i, text: r.text, source: r.source, meta: safeParse(r.meta), mh: r.mh }
   }
 
-  const nodeText = (l: number, i: number): string => {
-    const r = db.prepare('SELECT text FROM nodes WHERE l = ? AND i = ?').get(l, i)
-    return r ? r.text : ''
-  }
 
   const mthHex = (n: number): string => {
     const hashes: Buffer[] = []
@@ -178,6 +176,51 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     if (seq === 0) return tag(item.harness, item.session)
     const prev = getItem(seq - 1)
     return prev.harness === item.harness && prev.session === item.session ? null : tag(item.harness, item.session)
+  }
+
+  // The text output shows for node (l,i) (SPEC §2): what a fresh store would
+  // build, never a legacy model summary. A leaf is rebuilt from its item. An
+  // upper node keeps its stored text unless a model node is at or under it
+  // (a clip built over a summarized child quotes the summary); then it is
+  // rebuilt from its children the way ingest builds it. Read time only: node
+  // hashes cover items, not text, so verify, views_log and roots are unchanged.
+  type Shown = { text: string; meta: AggMeta | null }
+  type ShowCtx = { memo: Map<string, Shown>; taint: Set<string> | null }
+  const showCtx = (): ShowCtx => ({ memo: new Map(), taint: null })
+  // Every node that is a model node or has one under it, as "l:i".
+  const tainted = (): Set<string> => {
+    const t = new Set<string>()
+    for (const r of db.prepare("SELECT l, i FROM nodes WHERE source = 'model'").all() as { l: number; i: number }[]) {
+      for (let l = Number(r.l), i = Number(r.i); l <= 62; l++, i = Math.floor(i / 2)) {
+        const k = `${l}:${i}`
+        if (t.has(k)) break
+        t.add(k)
+      }
+    }
+    return t
+  }
+  const shown = (l: number, i: number, ctx: ShowCtx = showCtx()): Shown => {
+    if (l === 0) {
+      const leaf = leafText(getItem(i), leafTag(i))
+      return { text: leaf.text, meta: leaf.meta }
+    }
+    const k = `${l}:${i}`
+    const hit = ctx.memo.get(k)
+    if (hit !== undefined) return hit
+    if (ctx.taint === null) ctx.taint = tainted()
+    const stored = ctx.taint.has(k) ? null : getNode(l, i)
+    let r: Shown
+    if (stored !== null) {
+      r = { text: stored.text, meta: stored.meta }
+    } else {
+      const a = shown(l - 1, i * 2, ctx)
+      const b = shown(l - 1, i * 2 + 1, ctx)
+      // As ingest builds it: the det aggregate when both halves are tool-only, else a clip.
+      const m = a.meta !== null && b.meta !== null ? combine(a.meta, b.meta) : null
+      r = m !== null ? { text: aggText(m), meta: m } : { text: mergeClip(a.text, b.text), meta: null }
+    }
+    ctx.memo.set(k, r)
+    return r
   }
 
   // Ingest a batch of NormItems. Caller must already hold a transaction.
@@ -476,8 +519,9 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       if ('l' in r) {
         const [lo, hi] = span(r.l, r.i)
         if (hi >= count) throw new Error(`zoom #${lo}-${hi}: beyond store (${count} items)`)
-        const a = getNode(r.l - 1, r.i * 2)!
-        const b = getNode(r.l - 1, r.i * 2 + 1)!
+        const ctx = showCtx()
+        const a = shown(r.l - 1, r.i * 2, ctx)
+        const b = shown(r.l - 1, r.i * 2 + 1, ctx)
         return `${refOf(r.l - 1, r.i * 2)}|${a.text}\n${refOf(r.l - 1, r.i * 2 + 1)}|${b.text}`
       }
       const n = r.item
@@ -520,7 +564,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
           const idx = m.index
           const start = Math.max(0, idx - 60)
           const finish = Math.min(row.body.length, idx + m[0].length + 60)
-          hits.push({ n: Number(row.rowid), leaf: nodeText(0, Number(row.rowid)), snippet: clipMark(oneLine(row.body.slice(start, finish)), 120) })
+          hits.push({ n: Number(row.rowid), leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.body.slice(start, finish)), 120) })
         }
       } else {
         const pick = (query: string) => db.prepare(
@@ -530,7 +574,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
         rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))
         for (const row of rows) {
-          hits.push({ n: Number(row.rowid), leaf: nodeText(0, Number(row.rowid)), snippet: clipMark(oneLine(row.s), 120) })
+          hits.push({ n: Number(row.rowid), leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.s), 120) })
         }
       }
       if (hits.length === 0) return `no hits for ${q}`
@@ -545,7 +589,8 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
 
     roots() {
       const rs = roots(countItems())
-      return rs.map((r) => refOf(r.l, r.i) + '|' + nodeText(r.l, r.i)).join('\n')
+      const ctx = showCtx()
+      return rs.map((r) => refOf(r.l, r.i) + '|' + shown(r.l, r.i, ctx).text).join('\n')
     },
 
     pin(ref, reason) {

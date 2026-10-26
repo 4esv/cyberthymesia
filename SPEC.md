@@ -65,8 +65,16 @@ history" without searching, and summaries were the dominant cost. Nothing asks
 for them, so core has no summary queue: `pending`, `put` and `forget`, their
 prompts and the `pending` count in `status` are gone. A `clip` node is just the
 tree's text, not queued work. Old stores still open: their `model` nodes keep
-their text (range zoom shows it), `verify` checks hashes, not sources, the
-`nodes.tries` column stays unused, and `<recent>` never reads node text (§3).
+their stored text, but no output shows it. A paraphrase shown as the log
+compounds misunderstanding. So every output that shows node text (`search`
+hit lines, range zoom, `roots`) shows what a fresh store would build: a leaf
+is rebuilt from its item (`leafText`, with its tag), and an upper node that
+is a `model` node or has one under it (a clip built over a summarized child
+quotes the summary) is rebuilt from its children as ingest builds it. This is
+at read time: node hashes (`mh`) cover items, not text, so `verify`, the
+roots and `views_log` are unchanged and no migration is needed. `verify`
+checks hashes, not sources, the `nodes.tries` column stays unused, and
+`<recent>` never reads node text (§3).
 
 ## 3. View
 
@@ -110,7 +118,8 @@ bytes stay stable between folds (prompt cache).
 
 ## 4. Search and zoom
 
-- `zoom('#lo-hi')` → the two child lines (`#ref|text`, current text). A range
+- `zoom('#lo-hi')` → the two child lines (`#ref|text`, the deterministic text of §2,
+  never a legacy model summary). A range
   must be aligned (hi−lo+1 a power of two, lo a multiple of it); otherwise core
   throws a message saying so, and both adapters return that message to the model.
 - `zoom('#n')` → item n whole: kind, session, ts, text (tool: input + output),
@@ -356,6 +365,10 @@ sessions, failures):
 6. `zoom('#lo-hi')` returns exactly its two children; `#n@offset` pages reassemble to the item.
 7. Pins: the quota is respected; a failure auto-resolves on a later success; heuristics never remove a pin.
 8. Determinism: the same input gives byte-identical view blocks.
+9. Legacy summaries: a store with injected `model` nodes (leaves, upper nodes,
+   a tool-only node, a clip over a summarized child) gives `search`, regex
+   search, `roots` and every range zoom byte-identical to a fresh store of the
+   same items, with the same root.
 
 Each guard is mutation-tested once (break it, see a test fail, restore), and the
 result is recorded in `core/test/MUTATIONS.md`.

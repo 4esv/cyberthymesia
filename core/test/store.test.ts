@@ -573,10 +573,59 @@ test('legacy summaries: an old store with model nodes opens, verifies and zooms;
   d.close()
   const t = openStore(s.root, { home: dirname(dirname(s.dbPath)) })
   assert.deepEqual(t.verify(), { ok: true, problems: [] })
-  assert.equal(t.zoom('#0-1'), '#0|u:@cess1 summary zero\n#1|' + nodeRow(db(), 0, 1).text)
+  assert.match(t.zoom('#0-1'), /^#0\|u:@cess1 alpha alpha/, 'range zoom rebuilds the leaf from its item')
+  assert.doesNotMatch(t.zoom('#0-1'), /summary zero/, 'range zoom never shows a model summary')
   assert.match(t.view('claude', 'sess1', { tailStart: 3 }).block, /\n#0\|u:@cess1 alpha/, '<recent> is rebuilt from the item, not the summary')
   assert.deepEqual(Object.keys(t.status()).sort(), ['algedonic', 'items', 'nodes', 'pins', 'root'])
   assert.equal('pending' in t || 'put' in t || 'forget' in t, false, 'no summary queue in the API')
+})
+
+test('legacy summaries are never shown: search, regex, roots and every range zoom match a fresh store', () => {
+  // The same 13 items in two stores; in one, an old adapter left model text on
+  // leaves, on upper nodes, on a tool-only (det) node, and in a clip built over
+  // a summarized child. Every output that shows node text must equal the fresh
+  // store's byte for byte, and never quote MODELSUM.
+  const items: NormItem[] = []
+  for (let k = 0; k < 13; k++) {
+    const sess = k < 7 ? 'sessA' : 'sessB'
+    if (k === 4 || k === 5) items.push(tool('Bash', { command: 'echo ' + k }, 'line ' + k, false, sess, 'tl' + k))
+    else if (k % 2 === 0) items.push(user('kiwi word' + k + ' ' + long('u' + k, 60), sess, 'ul' + k))
+    else items.push(asst('mango word' + k + ' ' + long('a' + k, 60), sess, 'al' + k))
+  }
+  const fresh = mk().s
+  fresh.ingest(items)
+  const { s, db } = mk()
+  s.ingest(items)
+  const d = db()
+  const put = (l: number, i: number, text: string) => d.prepare("UPDATE nodes SET text = ?, source = 'model', tries = 1 WHERE l = ? AND i = ?").run(text, l, i)
+  put(0, 1, 'a:MODELSUM leaf one')
+  put(0, 8, 'u:@cessB MODELSUM leaf eight')
+  put(1, 2, 't* MODELSUM tools')
+  put(1, 5, 'MODELSUM pair five')
+  put(2, 2, 'MODELSUM quad two')
+  // A clip built after its left child was summarized quotes the summary but is not itself a model node.
+  d.prepare("UPDATE nodes SET text = 'MODELSUM in a clip … tail' WHERE l = 3 AND i = 0").run()
+  d.prepare("UPDATE nodes SET source = 'model' WHERE l = 1 AND i = 0").run()
+  d.close()
+  const t = openStore(s.root, { home: dirname(dirname(s.dbPath)) })
+  const outs: [string, string][] = [['roots', t.roots()]]
+  assert.equal(t.roots(), fresh.roots())
+  for (let l = 1; l <= 3; l++) {
+    for (let i = 0; ((i + 1) << l) <= 13; i++) {
+      const ref = `#${i << l}-${((i + 1) << l) - 1}`
+      outs.push([ref, t.zoom(ref)])
+      assert.equal(t.zoom(ref), fresh.zoom(ref), `zoom ${ref}`)
+    }
+  }
+  for (const q of ['kiwi', 'mango', 'word8', 'echo']) {
+    outs.push([q, t.search(q)])
+    assert.equal(t.search(q), fresh.search(q), `search ${q}`)
+    assert.equal(t.search(q, { regex: true }), fresh.search(q, { regex: true }), `regex ${q}`)
+  }
+  for (const [what, out] of outs) assert.doesNotMatch(out, /MODELSUM/, what)
+  assert.match(t.zoom('#0-7'), /^#0-3\|.*\n#4-7\|/, 'zoom of the summarized branch shows both halves')
+  assert.deepEqual(t.verify(), { ok: true, problems: [] })
+  assert.equal(t.status().root, fresh.status().root, 'node hashes cover items, not text: the root is the same')
 })
 
 test('verify: detects tampering of every kind', () => {
