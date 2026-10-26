@@ -28,7 +28,8 @@ read the log as it is now.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
 - memory_find(query, from?): full-text search over every item, newest first. from
-  is user, assistant or tool and keeps only items of that kind. Calls of these
+  is user, assistant or tool and keeps only items of that kind. user means what
+  the user typed, not a brief for a subagent or a one-shot run. Calls of these
   memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.

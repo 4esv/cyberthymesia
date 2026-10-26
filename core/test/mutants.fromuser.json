@@ -1,0 +1,16 @@
+[
+  { "id": "U01", "file": "core/src/index.ts", "find": " AND items.agent IS NULL AND items.seq NOT IN", "replace": " AND items.seq NOT IN", "guard": "from user drops subagent briefs" },
+  { "id": "U02", "file": "core/src/index.ts", "find": " AND items.seq NOT IN (SELECT seq FROM authors)'", "replace": "'", "guard": "from user drops items in authors" },
+  { "id": "U03", "file": "core/src/ingest.ts", "find": "if (d.isCompactSummary === true) return 'compact'", "replace": "", "guard": "a compaction summary is marked compact" },
+  { "id": "U04", "file": "core/src/ingest.ts", "find": "if (d.entrypoint === 'sdk-cli') return 'oneshot'", "replace": "", "guard": "a claude -p turn is marked oneshot" },
+  { "id": "U05", "file": "core/src/ingest.ts", "find": "k !== 'human' ? k : undefined", "replace": "k !== 'plugin' ? k : undefined", "guard": "a non-human origin is marked, a human one is not" },
+  { "id": "U06", "file": "core/src/ingest.ts", "find": "items.push({ ...base, ...by, uuid: d.uuid + ':0'", "replace": "items.push({ ...base, uuid: d.uuid + ':0'", "guard": "syncClaude carries the author of a user turn" },
+  { "id": "U07", "file": "core/src/index.ts", "find": "(item.oneShot === true ? 'oneshot' : undefined)", "replace": "undefined", "guard": "a oneShot user item is marked oneshot" },
+  { "id": "U08", "file": "core/src/index.ts", "find": "if (by !== undefined) insAuthor.run(seq, by)", "replace": "", "guard": "ingest records authors" },
+  { "id": "U09", "file": "core/src/index.ts", "find": "if (!hadAuthors && countItems() > 0) {", "replace": "if (false) {", "guard": "an old store relabels at open" },
+  { "id": "U10", "file": "core/src/index.ts", "find": "const hadAuthors = db.prepare(\"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'authors'\").get() !== undefined", "replace": "const hadAuthors = false", "guard": "the relabel runs once, never on a store that has the table" },
+  { "id": "U11", "file": "core/src/index.ts", "find": "authors.get(r.uuid.slice(0, r.uuid.lastIndexOf(':')))", "replace": "authors.get(r.uuid)", "guard": "the relabel matches the record uuid without the part suffix" },
+  { "id": "U12", "file": "core/src/index.ts", "find": "const mine = bySession.get(path.basename(f, '.jsonl'))", "replace": "const mine = bySession.get(f)", "guard": "the relabel finds a session's transcript by file name" },
+  { "id": "U13", "file": "core/src/index.ts", "find": "text: r.text, ...(by !== undefined ? { by } : {}) }", "replace": "text: r.text }", "guard": "forgetSession keeps authors on the new seqs" },
+  { "id": "U14", "file": "core/src/index.ts", "find": "DELETE FROM views_log; DELETE FROM authors')", "replace": "DELETE FROM views_log')", "guard": "forgetSession clears stale authors before re-ingest" }
+]

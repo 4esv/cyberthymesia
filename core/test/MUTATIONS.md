@@ -459,3 +459,23 @@ Test command: `node --test core/test/fuzzy.test.ts core/test/store.test.ts` (mut
 | Y13 | core/src/fuzzy.ts | the OR query includes the near spellings | killed |
 | Y14 | core/src/index.ts | the note names the words that were searched | killed |
 | Y15 | core/src/index.ts | near and OR hits share the EXTRA cap | killed |
+
+## from "user" keeps only what the user typed (2026-10-26): 14/14 killed
+Test command: `node --test core/test/authors.test.ts core/test/store.test.ts` (mutants in core/test/mutants.fromuser.json). U14 (forgetSession clears stale authors) survived at first. The forget test left no typed item on a seq that a stale row could hide. The test now puts a plugin turn before a typed one, so the typed one moves onto the old seq of the plugin turn. The core `from` mutants (core/test/mutants.from.json) still give 15/15 killed with their own command.
+
+| id | file | guard | result |
+|---|---|---|---|
+| U01 | core/src/index.ts | from user drops subagent briefs | killed |
+| U02 | core/src/index.ts | from user drops items in authors | killed |
+| U03 | core/src/ingest.ts | a compaction summary is marked compact | killed |
+| U04 | core/src/ingest.ts | a claude -p turn is marked oneshot | killed |
+| U05 | core/src/ingest.ts | a non-human origin is marked, a human one is not | killed |
+| U06 | core/src/ingest.ts | syncClaude carries the author of a user turn | killed |
+| U07 | core/src/index.ts | a oneShot user item is marked oneshot | killed |
+| U08 | core/src/index.ts | ingest records authors | killed |
+| U09 | core/src/index.ts | an old store relabels at open | killed |
+| U10 | core/src/index.ts | the relabel runs once, never on a store that has the table | killed |
+| U11 | core/src/index.ts | the relabel matches the record uuid without the part suffix | killed |
+| U12 | core/src/index.ts | the relabel finds a session's transcript by file name | killed |
+| U13 | core/src/index.ts | forgetSession keeps authors on the new seqs | killed |
+| U14 | core/src/index.ts | forgetSession clears stale authors before re-ingest | killed |

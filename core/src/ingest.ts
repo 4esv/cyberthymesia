@@ -99,6 +99,32 @@ class Pairing {
   }
 }
 
+// Who wrote a Claude user record when the person at the keyboard did not:
+// 'compact' (the engine's compaction summary), 'oneshot' (claude -p) or the
+// record's non-human origin ('plugin', 'peer', 'task-notification',
+// 'coordinator', ...). undefined: the user typed it, pasted text included.
+// Subagent prompts are told apart by the agent column instead.
+export function claudeAuthor(d: any): string | undefined {
+  if (d.isCompactSummary === true) return 'compact'
+  if (d.entrypoint === 'sdk-cli') return 'oneshot'
+  const k = d?.origin?.kind
+  return typeof k === 'string' && k !== 'human' ? k : undefined
+}
+
+// claudeAuthor of every user record in a transcript, by record uuid: how a
+// store ingested before authors were kept learns them (index.ts relabel).
+export function claudeAuthors(file: string): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const line of readLines(file, 0).lines) {
+    if (!line.includes('"user"')) continue
+    const d = parse(line)
+    if (!d || d.type !== 'user' || typeof d.uuid !== 'string') continue
+    const by = claudeAuthor(d)
+    if (by !== undefined) out.set(d.uuid, by)
+  }
+  return out
+}
+
 function agentOfFile(file: string): string | undefined {
   const base = path.basename(file, '.jsonl')
   return path.basename(path.dirname(file)) === 'subagents' && base.startsWith('agent-') ? base.slice(6) : undefined
@@ -129,8 +155,10 @@ export function parseClaude(file: string, start: number, lookup: Lookup): Chunk 
     const base = { harness: 'claude' as const, session, ...(agent !== undefined ? { agent } : {}), ...(d.entrypoint === 'sdk-cli' ? { oneShot: true } : {}) }
     const content = msg.content
     if (d.type === 'user') {
+      const author = claudeAuthor(d)
+      const by = author !== undefined ? { by: author } : {}
       if (typeof content === 'string') {
-        if (!injected(content) && content.trim() !== '') items.push({ ...base, uuid: d.uuid + ':0', kind: 'user', ts, text: content })
+        if (!injected(content) && content.trim() !== '') items.push({ ...base, ...by, uuid: d.uuid + ':0', kind: 'user', ts, text: content })
         continue
       }
       if (!Array.isArray(content)) continue
@@ -159,7 +187,7 @@ export function parseClaude(file: string, start: number, lookup: Lookup): Chunk 
           parts.push('[image]')
         }
       })
-      if (parts.length > 0) items.push({ ...base, uuid: d.uuid + ':' + first, kind: 'user', ts, text: parts.join('\n') })
+      if (parts.length > 0) items.push({ ...base, ...by, uuid: d.uuid + ':' + first, kind: 'user', ts, text: parts.join('\n') })
       continue
     }
     // assistant

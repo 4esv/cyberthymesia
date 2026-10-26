@@ -11,7 +11,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { projectRoot, storePath } from './project.ts'
-import { parseClaude, parsePi, claudeCwd, piHeader, listClaude, listPi } from './ingest.ts'
+import { parseClaude, parsePi, claudeCwd, piHeader, listClaude, listPi, claudeAuthors } from './ingest.ts'
 import type { Call } from './ingest.ts'
 import {
   leafText, tag, mergeClip, combine, aggText,
@@ -108,6 +108,10 @@ function schema(db: DatabaseSync): void {
       ts TEXT NOT NULL,
       PRIMARY KEY (harness, session, id)
     );
+    CREATE TABLE IF NOT EXISTS authors (
+      seq INTEGER PRIMARY KEY,
+      by TEXT NOT NULL
+    );
   `)
 }
 
@@ -128,6 +132,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;')
+  const hadAuthors = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'authors'").get() !== undefined
   schema(db)
 
   const tx = <T>(fn: () => T): T => {
@@ -236,6 +241,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
     const prev = db.prepare('SELECT harness, session FROM items WHERE seq = ?')
     const isForgotten = db.prepare('SELECT 1 FROM forgotten WHERE harness = ? AND session = ?')
     const insPin = db.prepare('INSERT INTO pins (seq, reason, kind, key, resolved) VALUES (?,?,?,?,0)')
+    const insAuthor = db.prepare('INSERT OR REPLACE INTO authors (seq, by) VALUES (?,?)')
     const resolveFail = db.prepare('UPDATE pins SET resolved = 1 WHERE kind = ? AND key = ? AND resolved = 0')
 
     for (const item of items) {
@@ -251,6 +257,9 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       insItem.run(seq, item.harness, item.session, agent, item.uuid, item.kind, item.ts, text, meta === null ? null : JSON.stringify(meta), hash)
       const body = tool !== null ? `${tool.name} ${canonical(tool.input)}\n${text}` : text
       insFts.run(seq, body)
+      // A user item the user did not type (a subagent's is told by its agent column).
+      const by = item.kind === 'user' && agent === null ? item.by ?? (item.oneShot === true ? 'oneshot' : undefined) : undefined
+      if (by !== undefined) insAuthor.run(seq, by)
       if (item.thinking) insRaw.run(item.harness, item.session, item.uuid, item.thinking)
 
       const row: ItemRec = { seq, harness: item.harness, session: item.session, agent, uuid: item.uuid, kind: item.kind, ts: item.ts, text, meta }
@@ -324,6 +333,32 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   }
   const deleteCall = (c: Call): void => {
     db.prepare('DELETE FROM calls WHERE harness = ? AND session = ? AND id = ?').run(c.harness, c.session, c.id)
+  }
+
+  // A store from before the authors table learns them once, from the Claude
+  // transcripts it was ingested from (main sessions only: a subagent's items
+  // carry their agent). A transcript that is gone teaches nothing; a pi -p
+  // run leaves no mark in its file, so old Pi items stay as they are.
+  if (!hadAuthors && countItems() > 0) {
+    tx(() => {
+      const rows = db.prepare("SELECT seq, session, uuid FROM items WHERE kind = 'user' AND harness = 'claude' AND agent IS NULL").all() as { seq: number; session: string; uuid: string }[]
+      const bySession = new Map<string, { seq: number; uuid: string }[]>()
+      for (const r of rows) {
+        const list = bySession.get(r.session) ?? []
+        list.push(r)
+        bySession.set(r.session, list)
+      }
+      const ins = db.prepare('INSERT OR REPLACE INTO authors (seq, by) VALUES (?,?)')
+      for (const f of listClaude(path.join(os.homedir(), '.claude', 'projects'))) {
+        const mine = bySession.get(path.basename(f, '.jsonl'))
+        if (mine === undefined) continue
+        const authors = claudeAuthors(f)
+        for (const r of mine) {
+          const by = authors.get(r.uuid.slice(0, r.uuid.lastIndexOf(':')))
+          if (by !== undefined) ins.run(r.seq, by)
+        }
+      }
+    })
   }
 
   // A session's view is its tailStart (SPEC §3). The views table keeps its
@@ -563,8 +598,11 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       if (from !== undefined && from !== 'user' && from !== 'assistant' && from !== 'tool') {
         throw new Error(`search: from must be user, assistant or tool, got "${String(from)}"`)
       }
-      // The kind filter runs in SQL, so it applies before limit.
-      const KIND = from === undefined ? '' : ' AND items.kind = ?'
+      // The kind filter runs in SQL, so it applies before limit. user means what
+      // the user typed: not a subagent's prompt, a one-shot run or an injection.
+      const KIND = from === undefined ? '' : from === 'user'
+        ? ' AND items.kind = ? AND items.agent IS NULL AND items.seq NOT IN (SELECT seq FROM authors)'
+        : ' AND items.kind = ?'
       const kindArgs = from === undefined ? [] : [from]
       const hits: { n: number; leaf: string; snippet: string }[] = []
       let note = ''
@@ -694,14 +732,16 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         const oldSeqKey = new Map<number, string>()
         for (const r of keep) oldSeqKey.set(Number(r.seq), keyOf(r))
         const oldPins = db.prepare('SELECT id, seq, reason, kind, key, resolved FROM pins ORDER BY id').all() as { id: number; seq: number; reason: string; kind: string; key: string | null; resolved: number }[]
+        const authorOf = new Map((db.prepare('SELECT seq, by FROM authors').all() as { seq: number; by: string }[]).map((a) => [Number(a.seq), a.by]))
         const items: NormItem[] = keep.map((r) => {
           const meta = safeParse(r.meta)
+          const by = authorOf.get(Number(r.seq))
           const base = { harness: r.harness as 'claude' | 'pi', session: r.session, ...(r.agent !== null ? { agent: r.agent } : {}), uuid: r.uuid, kind: r.kind as 'user' | 'assistant' | 'tool', ts: r.ts }
           return r.kind === 'tool'
             ? { ...base, text: '', tool: { name: meta?.name ?? 'unknown', input: meta?.input ?? null, output: r.text, isError: meta?.isError === true } }
-            : { ...base, text: r.text }
+            : { ...base, text: r.text, ...(by !== undefined ? { by } : {}) }
         })
-        db.exec('DELETE FROM items; DELETE FROM items_fts; DELETE FROM nodes; DELETE FROM pins; DELETE FROM views; DELETE FROM views_log')
+        db.exec('DELETE FROM items; DELETE FROM items_fts; DELETE FROM nodes; DELETE FROM pins; DELETE FROM views; DELETE FROM views_log; DELETE FROM authors')
         db.prepare('DELETE FROM raw WHERE harness = ? AND session = ?').run(h, s)
         db.prepare('DELETE FROM calls WHERE harness = ? AND session = ?').run(h, s)
         for (const f of cursors) db.prepare('DELETE FROM cursors WHERE file = ?').run(f)

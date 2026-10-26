@@ -12,6 +12,8 @@ export type NormItem = {
   thinking?: string
   // From a one-shot non-interactive run (claude -p, pi -p): never auto-pinned as a directive.
   oneShot?: boolean
+  // A user item the user did not type (ingest.ts claudeAuthor): kept in the authors table.
+  by?: string
 }
 
 export type ViewResult = {

@@ -130,7 +130,14 @@ bytes stay stable between folds (prompt cache).
   first (by `seq`, descending); `regex` scans newest first, capped by PAGE.
   `from` ∈ {`user`, `assistant`, `tool`} keeps only items of that kind, in SQL
   before `limit` applies (FTS and regex alike), so `limit` counts filtered hits
-  and the exclusion below still holds. Any other value throws
+  and the exclusion below still holds. `user` means what the user typed: it
+  also drops items with an agent (subagent briefs) and items listed in the
+  `authors` table, which marks a user item someone else wrote: `oneshot`
+  (`claude -p`, `pi -p` synced with `oneShot`), `compact` (a compaction summary)
+  or a non-human Claude `origin.kind` such as `plugin`. `authors` is outside the
+  item hash, so it never moves a root. A store that predates it fills it once at
+  open from this project's Claude transcripts, matched by session and uuid; old
+  `pi -p` items carry no marker and stay in. Any other value throws
   `search: from must be user, assistant or tool, got "x"`; both adapters return
   that message to the model as an error result.
 - **Near spellings.** When an FTS query without FTS syntax finds fewer than
@@ -268,7 +275,8 @@ read the log as it is now.
 - Never ask the user to repeat context the log may hold. Find it instead.
 - The latest word on a thing is the truth.
 - memory_find(query, from?): full-text search over every item, newest first. from
-  is user, assistant or tool and keeps only items of that kind. Calls of these
+  is user, assistant or tool and keeps only items of that kind. user means what
+  the user typed, not a brief for a subagent or a one-shot run. Calls of these
   memory_* tools are left out of search and <recent>.
 - memory_zoom(ref): #n gives item n whole, a tool call with its input and output.
   Long items are paged: #n@offset continues.
@@ -285,7 +293,7 @@ openStore(cwd: string, opts?: { home?: string }): Store
 type NormItem = { harness: 'claude'|'pi'; session: string; agent?: string;
   uuid: string; kind: 'user'|'assistant'|'tool'; ts: string; text: string;
   tool?: { name: string; input: unknown; output: string; isError: boolean };
-  thinking?: string }
+  thinking?: string; oneShot?: boolean; by?: string }  // by: who wrote a user item the user did not type
 interface Store {
   root: string; dbPath: string
   ingest(items: NormItem[]): { added: number; lastSeq: number }  // idempotent
@@ -397,6 +405,11 @@ sessions, failures):
 11. Some words only: below `FEW` hits the OR query adds hits after the rest,
    at most 3 together with the near hits, never past `limit`, never a repeat, under `from` and the own-call
    filter; the note appears only then; FTS syntax and regex are untouched.
+
+12. Typed only: `from: 'user'` drops subagent briefs, one-shot runs, plugin
+   turns and compaction summaries, in FTS and regex and before `limit`; without
+   `from` they are found; a store without `authors` learns them once at open;
+   `forgetSession` keeps them on the new seqs; `verify` still passes.
 
 Each guard is mutation-tested once (break it, see a test fail, restore), and the
 result is recorded in `core/test/MUTATIONS.md`.
