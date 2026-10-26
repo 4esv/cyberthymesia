@@ -411,3 +411,31 @@ Test command: `node --test core/test/store.test.ts` (mutants in core/test/mutant
 | V07 | core/src/index.ts | rebuilt tool-only node is the det aggregate, as ingest builds it | killed |
 | V08 | core/src/index.ts | rebuilt leaf carries its session tag, as ingest builds it | killed |
 | V09 | core/src/index.ts | memo is keyed by level and index | killed |
+
+## Near-spelling search fallback (2026-10-25): 22/22 killed
+Test command: `node --test core/test/fuzzy.test.ts core/test/store.test.ts` (mutants in core/test/mutants.fuzzy.json). Z03 survived at first, because the widened query's own LIMIT hid it. A case where the exact hit ranks low in the widened query now kills it.
+
+| id | file | guard | result |
+|---|---|---|---|
+| Z01 | core/src/index.ts | no widening once exact hits reach FEW | killed |
+| Z02 | core/src/index.ts | few exact hits do trigger the near-spelling search | killed |
+| Z03 | core/src/index.ts | near hits never push the output past limit | killed |
+| Z04 | core/src/index.ts | at most EXTRA near hits | killed |
+| Z05 | core/src/index.ts | an exact hit is not repeated or displaced by a near hit | killed |
+| Z06 | core/src/index.ts | exact hits are kept alongside near hits | killed |
+| Z07 | core/src/index.ts | output says which near spellings were searched | killed |
+| Z08 | core/src/index.ts | the vocab table is temp; the store file gains no table | killed |
+| Z09 | core/src/fuzzy.ts | FTS syntax queries are never rewritten | killed |
+| Z10 | core/src/fuzzy.ts | uppercase FTS operators count as syntax | killed |
+| Z11 | core/src/fuzzy.ts | words under 4 letters are not widened | killed |
+| Z12 | core/src/fuzzy.ts | 2 edits only from 8 letters | killed |
+| Z13 | core/src/fuzzy.ts | only letter words are widened | killed |
+| Z14 | core/src/fuzzy.ts | a word is not its own neighbour | killed |
+| Z15 | core/src/fuzzy.ts | a neighbour shares the first letter | killed |
+| Z16 | core/src/fuzzy.ts | neighbours with most documents first | killed |
+| Z17 | core/src/fuzzy.ts | at most NEAR neighbours per word | killed |
+| Z18 | core/src/fuzzy.ts | an adjacent swap costs 1 | killed |
+| Z19 | core/src/fuzzy.ts | distance is capped at max + 1 | killed |
+| Z20 | core/src/fuzzy.ts | words stay ANDed; only spellings are ORed | killed |
+| Z21 | core/src/fuzzy.ts | quotes inside a word are escaped | killed |
+| Z22 | core/src/fuzzy.ts | the vocab range covers the whole first letter | killed |

@@ -23,6 +23,7 @@ import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
 import { CYTH_TOOLS, cythTool } from './leaves.ts'
 import { NODE, PAGE, HEADER, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
 import type { NormItem, Store, ForgetPlan } from './types.ts'
+import { FEW, EXTRA, maxEdit, plainWords, nearWords, widenedQuery, letterRange } from './fuzzy.ts'
 
 function schema(db: DatabaseSync): void {
   db.exec(`
@@ -403,6 +404,19 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
   // meta (tampering) counts as not ours rather than throwing from json_extract.
   const NOT_OWN = `NOT (items.kind = 'tool' AND coalesce(json_valid(items.meta), 0) AND coalesce(json_extract(items.meta, '$.name'), '') IN (${CYTH_TOOLS.map(() => '?').join(',')}))`
 
+  // The index's words that could be near t, read live from FTS5's own vocab
+  // (a temp table: nothing is written to the store, old stores need nothing).
+  let vocabStmt: ReturnType<typeof db.prepare> | null = null
+  const vocabNear = (t: string): { term: string; doc: number }[] => {
+    const d = maxEdit(t)
+    if (d === 0) return []
+    if (vocabStmt === null) {
+      db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.items_vocab USING fts5vocab(main, items_fts, 'row')")
+      vocabStmt = db.prepare('SELECT term, doc FROM temp.items_vocab WHERE term >= ? AND term < ?')
+    }
+    return (vocabStmt.all(...letterRange(t)) as any[]).map((r) => ({ term: String(r.term), doc: Number(r.doc) }))
+  }
+
   const store: Store = {
     root,
     dbPath,
@@ -553,6 +567,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
       const KIND = from === undefined ? '' : ' AND items.kind = ?'
       const kindArgs = from === undefined ? [] : [from]
       const hits: { n: number; leaf: string; snippet: string }[] = []
+      let note = ''
       if (opts?.regex) {
         let re: RegExp
         try { re = new RegExp(q, 'i') } catch { return `no hits for ${q}` }
@@ -572,6 +587,20 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         ).all(query, ...CYTH_TOOLS, ...kindArgs, limit)
         let rows: any[]
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
+        // Few exact hits: also try near spellings of the words (fuzzy.ts).
+        const words = rows.length < Math.min(FEW, limit) ? plainWords(q) : null
+        if (words !== null && words.length > 0) {
+          const groups = words.map((t) => [t, ...nearWords(vocabNear(t), t)])
+          const used = groups.filter((g) => g.length > 1)
+          if (used.length > 0) {
+            const seen = new Set(rows.map((r) => Number(r.rowid)))
+            const more = pick(widenedQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA, limit - rows.length))
+            if (more.length > 0) {
+              rows = [...rows, ...more]
+              note = '\n(near spellings also searched: ' + used.map((g) => `${g[0]}: ${g.slice(1).join(' ')}`).join('; ') + ')'
+            }
+          }
+        }
         rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))
         for (const row of rows) {
           hits.push({ n: Number(row.rowid), leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.s), 120) })
@@ -584,7 +613,7 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         if (out !== '' && bytes(out) + bytes(line) > PAGE) break
         out += (out === '' ? '' : '\n') + line
       }
-      return out
+      return out + note
     },
 
     roots() {

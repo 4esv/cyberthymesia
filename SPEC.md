@@ -133,6 +133,19 @@ bytes stay stable between folds (prompt cache).
   and the exclusion below still holds. Any other value throws
   `search: from must be user, assistant or tool, got "x"`; both adapters return
   that message to the model as an error result.
+- **Near spellings.** When an FTS query without FTS syntax finds fewer than
+  `min(FEW = 5, limit)` hits, each word of 4 or more letters is widened to
+  itself OR up to 3 index words within 1 edit (2 from 8 letters; an adjacent
+  swap is 1 edit) that share its first letter, most documents first. The
+  words stay ANDed. Up to 3 new hits are added after the exact ones, never
+  past `limit`, under the same `from` and own-call filters. The output then
+  ends with `(near spellings also searched: balnce: balance)`, so the model
+  knows which hits are not exact. The vocab is FTS5's own (`fts5vocab`, a
+  temp table), so nothing is written to the store and old stores need no
+  migration. Regex search is never widened. Measured on 37 cases labelled
+  by the agent over copies of two real stores (2026-10-25, tuned on the same
+  set): recall@5 0.43 → 0.70 at 1.38× the bytes, no control lost. OR
+  fallbacks recalled up to 0.89 but cost 2.5 to 9× the bytes.
 - **Own calls are not hits.** A tool item of cyth's own tools (`memory_find`,
   `memory_zoom`, `memory_pin`, `memory_unpin`, `memory_pins`, in both
   spellings: Pi's bare name and Claude Code's `mcp__cyberthymesia__<name>`)
@@ -369,6 +382,10 @@ sessions, failures):
    a tool-only node, a clip over a summarized child) gives `search`, regex
    search, `roots` and every range zoom byte-identical to a fresh store of the
    same items, with the same root.
+10. Near spellings: a typo finds the item and the output names the spellings;
+   no widening at `FEW` exact hits, on FTS syntax or in regex; exact hits are
+   kept; `limit`, `from` and the own-call filter hold; the store file gains no
+   table.
 
 Each guard is mutation-tested once (break it, see a test fail, restore), and the
 result is recorded in `core/test/MUTATIONS.md`.
