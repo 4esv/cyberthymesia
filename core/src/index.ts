@@ -23,7 +23,7 @@ import { leafHash, nodeHash, foldRoots, mthReference } from './merkle.ts'
 import { CYTH_TOOLS, cythTool } from './leaves.ts'
 import { NODE, PAGE, HEADER, bytes, clipMark, oneLine, canonical, sha256hex, span, refOf, parseRef, roots } from './util.ts'
 import type { NormItem, Store, ForgetPlan } from './types.ts'
-import { FEW, EXTRA, maxEdit, plainWords, nearWords, widenedQuery, letterRange } from './fuzzy.ts'
+import { FEW, EXTRA, maxEdit, plainWords, nearWords, widenedQuery, orQuery, letterRange } from './fuzzy.ts'
 
 function schema(db: DatabaseSync): void {
   db.exec(`
@@ -589,19 +589,29 @@ export function openStore(cwd: string, opts?: { home?: string; session?: Session
         try { rows = pick(q) } catch { rows = pick(q.split(/\s+/).filter((x) => x !== '').map((t) => '"' + t.replace(/"/g, '""') + '"').join(' ')) }
         // Few exact hits: also try near spellings of the words (fuzzy.ts).
         const words = rows.length < Math.min(FEW, limit) ? plainWords(q) : null
-        if (words !== null && words.length > 0) {
-          const groups = words.map((t) => [t, ...nearWords(vocabNear(t), t)])
-          const used = groups.filter((g) => g.length > 1)
-          if (used.length > 0) {
-            const seen = new Set(rows.map((r) => Number(r.rowid)))
-            const more = pick(widenedQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA, limit - rows.length))
-            if (more.length > 0) {
-              rows = [...rows, ...more]
-              note = '\n(near spellings also searched: ' + used.map((g) => `${g[0]}: ${g.slice(1).join(' ')}`).join('; ') + ')'
-            }
+        const groups = words === null ? [] : words.map((t) => [t, ...nearWords(vocabNear(t), t)])
+        const used = groups.filter((g) => g.length > 1)
+        const exactN = rows.length
+        if (used.length > 0) {
+          const seen = new Set(rows.map((r) => Number(r.rowid)))
+          const more = pick(widenedQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA, limit - rows.length))
+          if (more.length > 0) {
+            rows = [...rows, ...more]
+            note = '\n(near spellings also searched: ' + used.map((g) => `${g[0]}: ${g.slice(1).join(' ')}`).join('; ') + ')'
           }
         }
         rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))
+        // Still few: add hits that match only some of the words, listed last. Near and
+        // loose hits share the EXTRA cap.
+        if (groups.length > 0 && rows.length < Math.min(FEW, limit)) {
+          const seen = new Set(rows.map((r) => Number(r.rowid)))
+          const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA - (rows.length - exactN), limit - rows.length))
+          if (loose.length > 0) {
+            loose.sort((a, b) => Number(b.rowid) - Number(a.rowid))
+            rows = [...rows, ...loose]
+            note += `\n(fewer exact hits, so the last ${loose.length} match only some words; searched any of: ${[...new Set(groups.flat())].join(', ')})`
+          }
+        }
         for (const row of rows) {
           hits.push({ n: Number(row.rowid), leaf: shown(0, Number(row.rowid)).text, snippet: clipMark(oneLine(row.s), 120) })
         }

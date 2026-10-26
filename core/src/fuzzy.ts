@@ -3,8 +3,9 @@
 // the index within a small edit distance ("balnce" finds "balance", "licence"
 // finds "license"), and at most EXTRA new hits are added. Measured on 37
 // agent-labelled cases over copies of two real stores (2026-10-25, tuned on
-// the same set): recall@5 0.43 → 0.70 at 1.38× the output bytes. OR
-// fallbacks recalled more but cost 2.5 to 9× the bytes.
+// the same set): recall@5 0.43 → 0.70 at 1.38× the output bytes. If hits are
+// still under FEW, search fills the rest of EXTRA with hits that match only
+// some of the words (orQuery): recall@5 0.89 at 2.7× the V0 bytes.
 
 export const FEW = 5
 export const NEAR = 3
@@ -69,3 +70,7 @@ export function letterRange(t: string): [string, string] {
 const quote = (t: string) => '"' + t.replace(/"/g, '""') + '"'
 // AND over words, each word OR its neighbours.
 export const widenedQuery = (groups: string[][]): string => groups.map((g) => '(' + g.map(quote).join(' OR ') + ')').join(' AND ')
+
+// Any of the words or their neighbours, each once; bm25 ranks hits with more
+// of them higher.
+export const orQuery = (groups: string[][]): string => [...new Set(groups.flat())].map(quote).join(' OR ')

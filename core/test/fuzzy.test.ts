@@ -77,8 +77,9 @@ test('search: a typo finds the item, exact hits stay, the note names the spellin
     item('user', 'deepseek balnce typo in my own words'), // #2
   ])
   const out = s.search('deepseek balnce')
-  assert.deepEqual(hitSeqs(out).sort(), [0, 2])
-  assert.match(out, /\n\(near spellings also searched: balnce: balance\)$/)
+  assert.deepEqual(hitSeqs(out), [2, 0, 1]) // exact and near newest first, then the one that matches only "balance"
+  assert.match(out, /\n\(near spellings also searched: balnce: balance\)\n\(fewer exact hits/)
+  assert.match(out, /searched any of: deepseek, balnce, balance\)$/) // the words and their spellings
   // from applies to near hits too
   assert.deepEqual(hitSeqs(s.search('balnce', { from: 'assistant' })), [1])
   // no neighbour: unchanged
@@ -99,7 +100,7 @@ test('search: no widening once exact hits reach FEW; at most EXTRA near hits; li
   const { s: t } = mk()
   t.ingest([item('user', 'licence one'), ...Array.from({ length: 10 }, (_, k) => item('user', 'license other ' + k))])
   const few = t.search('licence')
-  assert.equal(hitSeqs(few).length, 1 + EXTRA)
+  assert.equal(hitSeqs(few).length, 1 + EXTRA) // near and loose hits share the EXTRA cap
   assert.ok(hitSeqs(few).includes(0)) // the exact hit is never displaced
   assert.equal(EXTRA, 3)
   assert.equal(hitSeqs(t.search('licence', { limit: 2 })).length, 2)
@@ -133,4 +134,72 @@ test('search: the vocab lives in temp, so the store file gains no table', () => 
   assert.deepEqual(hitSeqs(s.search('licnse')), [0])
   const names = db().prepare("SELECT name FROM sqlite_master WHERE name LIKE '%vocab%'").all()
   assert.deepEqual(names, [])
+})
+
+test('search: OR fallback adds hits matching only some words, last, marked, below FEW only', () => {
+  const { s } = mk()
+  s.ingest([
+    item('user', 'the rules doc lives in the vault'), // #0, exact
+    item('assistant', 'rules for naming files'), // #1, rules only
+    item('assistant', 'rules about commits'), // #2
+    item('assistant', 'rules about branches'), // #3
+    item('assistant', 'rules about tests'), // #4
+    item('assistant', 'doc comments style'), // #5, doc only
+    item('user', 'unrelated chatter'), // #6
+  ])
+  const out = s.search('rules doc')
+  assert.deepEqual(hitSeqs(out), [0, 5, 3, 2]) // exact first; at most EXTRA loose; newest first among them
+  assert.match(out, /\n\(fewer exact hits, so the last 3 match only some words; searched any of: rules, doc\)$/)
+  assert.doesNotMatch(out, /near spellings/)
+  // limit and from hold
+  assert.deepEqual(hitSeqs(s.search('rules doc', { limit: 2 })), [0, 5])
+  assert.deepEqual(hitSeqs(s.search('rules doc', { from: 'assistant' })), [5, 3, 2]) // cap EXTRA, no user hits
+  assert.deepEqual(hitSeqs(s.search('rules doc', { from: 'user' })), [0])
+  // FTS syntax and regex are never rewritten
+  assert.deepEqual(hitSeqs(s.search('rules AND doc')), [0])
+  assert.deepEqual(hitSeqs(s.search('"rules doc"')), [0])
+  assert.deepEqual(hitSeqs(s.search('rules doc', { regex: true })), [0])
+})
+
+test('search: OR fallback stays off at FEW exact hits, dedups near hits, skips own calls', () => {
+  const { s } = mk()
+  s.ingest(Array.from({ length: FEW }, (_, k) => item('user', 'rules doc ' + k)).concat([item('user', 'rules only')])) // #0..4 exact, #5
+  const full = s.search('rules doc')
+  assert.deepEqual(hitSeqs(full).sort(), [0, 1, 2, 3, 4])
+  assert.doesNotMatch(full, /fewer exact hits/)
+  const { s: t } = mk()
+  t.ingest([
+    item('user', 'licence rules doc'), // #0 exact
+    item('user', 'license rules doc'), // #1 near
+    tool('mcp__cyberthymesia__memory_find', { query: 'rules' }, 'rules hits'), // #2 own call
+    item('user', 'rules elsewhere'), // #3 loose
+  ])
+  const out = t.search('licence rules doc')
+  assert.deepEqual(hitSeqs(out), [1, 0, 3]) // no repeats, no #2
+  assert.match(out, /near spellings also searched/)
+  assert.match(out, /the last 1 match only some words/)
+  // no note when nothing loose is added
+  const { s: u } = mk()
+  u.ingest([item('user', 'only exact here')])
+  assert.doesNotMatch(u.search('exact here'), /fewer exact hits/)
+})
+
+test('search: OR fallback respects limit past a low-ranked exact hit, and stays off when near hits reach FEW', () => {
+  const { s } = mk()
+  s.ingest([
+    item('user', 'alpha beta ' + 'filler words '.repeat(80)), // #0, the one exact hit, ranks low
+    ...Array.from({ length: 6 }, (_, k) => item('user', 'alpha only ' + k)),
+    ...Array.from({ length: 6 }, (_, k) => item('user', 'beta only ' + k)),
+  ])
+  assert.equal(hitSeqs(s.search('alpha beta', { limit: 2 })).length, 2)
+  assert.ok(hitSeqs(s.search('alpha beta', { limit: 2 })).includes(0))
+  const { s: t } = mk()
+  t.ingest([
+    item('user', 'licence rules'), item('user', 'licence rules two'), // #0, #1 exact
+    ...Array.from({ length: 4 }, (_, k) => item('user', 'license rules ' + k)), // near
+    item('user', 'rules alone'),
+  ])
+  const out = t.search('licence rules')
+  assert.equal(hitSeqs(out).length, 2 + EXTRA)
+  assert.doesNotMatch(out, /fewer exact hits/)
 })

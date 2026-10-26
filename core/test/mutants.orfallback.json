@@ -1,0 +1,100 @@
+[
+ {
+  "id": "Y02",
+  "file": "core/src/index.ts",
+  "find": "if (groups.length > 0 && rows.length < Math.min(FEW, limit)) {",
+  "replace": "if (groups.length > 0 && rows.length < 0) {",
+  "guard": "few hits do trigger the OR fallback"
+ },
+ {
+  "id": "Y03",
+  "file": "core/src/index.ts",
+  "find": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA - (rows.length - exactN), limit - rows.length))",
+  "replace": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA - (rows.length - exactN), limit))",
+  "guard": "OR hits never push the output past limit"
+ },
+ {
+  "id": "Y04",
+  "file": "core/src/index.ts",
+  "find": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA - (rows.length - exactN), limit - rows.length))",
+  "replace": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, limit - rows.length)",
+  "guard": "at most EXTRA OR hits"
+ },
+ {
+  "id": "Y05",
+  "file": "core/src/index.ts",
+  "find": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid)))",
+  "replace": "const loose = pick(orQuery(groups))",
+  "guard": "an exact or near hit is not repeated by the OR fallback"
+ },
+ {
+  "id": "Y06",
+  "file": "core/src/index.ts",
+  "find": "rows = [...rows, ...loose]",
+  "replace": "rows = [...loose]",
+  "guard": "exact hits are kept alongside OR hits"
+ },
+ {
+  "id": "Y07",
+  "file": "core/src/index.ts",
+  "find": "note += `\\n(fewer exact hits",
+  "replace": "note += '' && `\\n(fewer exact hits",
+  "guard": "output says the last hits match only some words"
+ },
+ {
+  "id": "Y08",
+  "file": "core/src/index.ts",
+  "find": "note += `\\n(fewer exact hits",
+  "replace": "note = `\\n(fewer exact hits",
+  "guard": "the OR note does not replace the near-spelling note"
+ },
+ {
+  "id": "Y09",
+  "file": "core/src/index.ts",
+  "find": "loose.sort((a, b) => Number(b.rowid) - Number(a.rowid))\n",
+  "replace": "",
+  "guard": "OR hits are listed newest first"
+ },
+ {
+  "id": "Y10",
+  "file": "core/src/index.ts",
+  "find": "rows.sort((a, b) => Number(b.rowid) - Number(a.rowid))\n        // Still few",
+  "replace": "rows.sort((a, b) => Number(a.rowid) - Number(b.rowid))\n        // Still few",
+  "guard": "exact and near hits keep their newest-first order"
+ },
+ {
+  "id": "Y11",
+  "file": "core/src/index.ts",
+  "find": "const groups = words === null ? [] : words.map",
+  "replace": "const groups = words === null ? plainWords(q) ?? [] : words.map",
+  "guard": "FTS syntax queries get no OR fallback"
+ },
+ {
+  "id": "Y12",
+  "file": "core/src/fuzzy.ts",
+  "find": "[...new Set(groups.flat())].map(quote).join(' OR ')",
+  "replace": "groups.flat().map(quote).join(' AND ')",
+  "guard": "the fallback ORs the words instead of ANDing them"
+ },
+ {
+  "id": "Y13",
+  "file": "core/src/fuzzy.ts",
+  "find": "[...new Set(groups.flat())].map(quote)",
+  "replace": "[...new Set(groups.map((g) => g[0]))].map(quote)",
+  "guard": "the OR query includes the near spellings"
+ },
+ {
+  "id": "Y14",
+  "file": "core/src/index.ts",
+  "find": "searched any of: ${[...new Set(groups.flat())].join(', ')}",
+  "replace": "searched any of: ${groups.map((g) => g[0]).join(', ')}",
+  "guard": "the note names the words that were searched"
+ },
+ {
+  "id": "Y15",
+  "file": "core/src/index.ts",
+  "find": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA - (rows.length - exactN), limit - rows.length))",
+  "replace": "const loose = pick(orQuery(groups)).filter((r) => !seen.has(Number(r.rowid))).slice(0, Math.min(EXTRA, limit - rows.length))",
+  "guard": "near and OR hits share the EXTRA cap"
+ }
+]

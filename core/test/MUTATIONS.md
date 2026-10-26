@@ -439,3 +439,23 @@ Test command: `node --test core/test/fuzzy.test.ts core/test/store.test.ts` (mut
 | Z20 | core/src/fuzzy.ts | words stay ANDed; only spellings are ORed | killed |
 | Z21 | core/src/fuzzy.ts | quotes inside a word are escaped | killed |
 | Z22 | core/src/fuzzy.ts | the vocab range covers the whole first letter | killed |
+
+## OR fallback for search (2026-10-25): 14/14 killed
+Test command: `node --test core/test/fuzzy.test.ts core/test/store.test.ts` (mutants in core/test/mutants.orfallback.json). Y01, Y03 and Y14 survived at first and each got a test. After near and OR hits were made to share the EXTRA cap, Y01 (OR fallback stays off once exact and near hits reach FEW) became an equivalent mutant, because the shared cap is already spent by then, so it was dropped. Y15 (near and OR hits share the EXTRA cap) was added.
+
+| id | file | guard | result |
+|---|---|---|---|
+| Y02 | core/src/index.ts | few hits do trigger the OR fallback | killed |
+| Y03 | core/src/index.ts | OR hits never push the output past limit | killed |
+| Y04 | core/src/index.ts | at most EXTRA OR hits | killed |
+| Y05 | core/src/index.ts | an exact or near hit is not repeated by the OR fallback | killed |
+| Y06 | core/src/index.ts | exact hits are kept alongside OR hits | killed |
+| Y07 | core/src/index.ts | output says the last hits match only some words | killed |
+| Y08 | core/src/index.ts | the OR note does not replace the near-spelling note | killed |
+| Y09 | core/src/index.ts | OR hits are listed newest first | killed |
+| Y10 | core/src/index.ts | exact and near hits keep their newest-first order | killed |
+| Y11 | core/src/index.ts | FTS syntax queries get no OR fallback | killed |
+| Y12 | core/src/fuzzy.ts | the fallback ORs the words instead of ANDing them | killed |
+| Y13 | core/src/fuzzy.ts | the OR query includes the near spellings | killed |
+| Y14 | core/src/index.ts | the note names the words that were searched | killed |
+| Y15 | core/src/index.ts | near and OR hits share the EXTRA cap | killed |

@@ -146,6 +146,14 @@ bytes stay stable between folds (prompt cache).
   by the agent over copies of two real stores (2026-10-25, tuned on the same
   set): recall@5 0.43 → 0.70 at 1.38× the bytes, no control lost. OR
   fallbacks recalled up to 0.89 but cost 2.5 to 9× the bytes.
+- **Some words only.** If the hits are still fewer than `min(FEW, limit)`
+  after that step, one more query ORs the words and their neighbours, ranked
+  by bm25 under the same `from` and own-call filters. It fills what the
+  near-spelling step left of the 3 extra hits, so the two together add at most
+  3, after the others, newest first among themselves, never past `limit`. The output then ends with `(fewer exact hits, so the last 2 match
+  only some words; searched any of: rules, doc)`, so the model knows those
+  hits lack some of the words ("rules doc" finds an item that says only
+  "rules"). Same gates as above: no FTS syntax, no regex.
 - **Own calls are not hits.** A tool item of cyth's own tools (`memory_find`,
   `memory_zoom`, `memory_pin`, `memory_unpin`, `memory_pins`, in both
   spellings: Pi's bare name and Claude Code's `mcp__cyberthymesia__<name>`)
@@ -386,6 +394,9 @@ sessions, failures):
    no widening at `FEW` exact hits, on FTS syntax or in regex; exact hits are
    kept; `limit`, `from` and the own-call filter hold; the store file gains no
    table.
+11. Some words only: below `FEW` hits the OR query adds hits after the rest,
+   at most 3 together with the near hits, never past `limit`, never a repeat, under `from` and the own-call
+   filter; the note appears only then; FTS syntax and regex are untouched.
 
 Each guard is mutation-tested once (break it, see a test fail, restore), and the
 result is recorded in `core/test/MUTATIONS.md`.
